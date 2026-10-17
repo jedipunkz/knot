@@ -16,6 +16,16 @@ type mainRow struct {
 	commit  git.Commit
 	graph   []graph.Cell
 	special string // "unstaged" / "staged" pseudo commits
+	hl      *rowHighlight
+}
+
+// rowHighlight holds the fuzzy-filter match positions of one row. Positions
+// are rune indices into the corresponding displayed text.
+type rowHighlight struct {
+	subject []int
+	author  []int // positions in the formatted author; nil if it did not match
+	id      int   // number of leading commit ID runes matched
+	refs    []int // positions in the reference decoration text
 }
 
 // MainView lists commits, like tig's main view.
@@ -26,7 +36,9 @@ type MainView struct {
 	// SelectHead moves the cursor to HEAD once it is loaded.
 	SelectHead bool
 
-	rows        []mainRow
+	all         []mainRow // everything loaded, in log order
+	rows        []mainRow // visible rows: all, filtered by the query
+	query       string
 	builder     *graph.Builder
 	authorWidth int
 	moved       bool // the cursor was placed on a commit (SelectHead)
@@ -73,6 +85,7 @@ func (m changesMsg) ViewID() int { return m.id }
 
 func (v *MainView) Load(env *Env) tea.Cmd {
 	ctx := v.startLoad()
+	v.all = nil
 	v.rows = nil
 	sym := graph.Unicode
 	if env.Opts.ASCII {
@@ -142,9 +155,17 @@ func (v *MainView) Load(env *Env) tea.Cmd {
 func (v *MainView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
 	switch m := msg.(type) {
 	case commitBatchMsg:
+		batch := make([]mainRow, 0, len(m.commits))
 		for _, c := range m.commits {
-			v.rows = append(v.rows, mainRow{commit: c, graph: v.builder.Add(c.Hash, c.Parents)})
 			v.authorWidth = max(v.authorWidth, len([]rune(FormatAuthor(c.AuthorName, c.AuthorEmail, env.Opts.Author))))
+			batch = append(batch, mainRow{commit: c, graph: v.builder.Add(c.Hash, c.Parents)})
+		}
+		v.all = append(v.all, batch...)
+		if v.query != "" {
+			// Each batch is filtered on arrival and appended.
+			v.rows = append(v.rows, v.filterRows(env, batch)...)
+		} else {
+			v.rows = v.all
 		}
 		if v.SelectHead {
 			for i, r := range v.rows {
@@ -170,10 +191,15 @@ func (v *MainView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
 			pre = append(pre, mainRow{special: "staged", commit: git.Commit{Subject: "Staged changes"}})
 		}
 		if len(pre) > 0 {
+			v.all = append(pre, v.all...)
+			if v.query != "" {
+				// While a filter is active the pseudo rows stay hidden.
+				return nil
+			}
 			if v.Cursor > 0 || v.moved {
 				v.Cursor += len(pre)
 			}
-			v.rows = append(pre, v.rows...)
+			v.rows = v.all
 		}
 	}
 	return nil
@@ -182,6 +208,10 @@ func (v *MainView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
 func (v *MainView) Row(env *Env, i int) []Seg {
 	r := v.rows[i]
 	c := r.commit
+	hl := r.hl
+	if v.query == "" {
+		hl = nil
+	}
 	var segs []Seg
 	opts := env.Opts
 	for _, col := range env.Cfg.Main.Columns {
@@ -193,15 +223,31 @@ func (v *MainView) Row(env *Env, i int) []Seg {
 		case "author":
 			if opts.Author != "off" {
 				w := min(max(v.authorWidth, 6), 20)
-				segs = append(segs, Seg{theme.Author, Fit(FormatAuthor(c.AuthorName, c.AuthorEmail, opts.Author), w) + " "})
+				auth := Fit(FormatAuthor(c.AuthorName, c.AuthorEmail, opts.Author), w)
+				if hl != nil && len(hl.author) > 0 {
+					off := 0
+					segs = append(segs, splitMatched(env.Theme, theme.Author, auth, hl.author, &off)...)
+				} else {
+					segs = append(segs, Seg{theme.Author, auth})
+				}
+				segs = append(segs, Seg{theme.Default, " "})
 			}
 		case "commit-id":
 			if opts.ID {
 				n := env.Cfg.Main.CommitIDLength
-				segs = append(segs, Seg{theme.CommitID, Fit(Short(c.Hash, n), n) + " "})
+				id := Short(c.Hash, n)
+				if hl != nil && hl.id > 0 {
+					k := min(hl.id, len(id))
+					segs = append(segs, Seg{theme.SearchMatch, id[:k]}, Seg{theme.CommitID, id[k:]})
+				} else {
+					segs = append(segs, Seg{theme.CommitID, Fit(id, n)})
+				}
+				segs = append(segs, Seg{theme.Default, " "})
 			}
 		case "graph":
-			if !opts.Graph {
+			// The graph is meaningless for a non-contiguous subset: hide it
+			// while a filter is active.
+			if !opts.Graph || v.query != "" {
 				continue
 			}
 			if r.special != "" {
@@ -218,7 +264,11 @@ func (v *MainView) Row(env *Env, i int) []Seg {
 			segs = append(segs, Seg{theme.Default, " "})
 		case "refs":
 			if opts.Refs && r.special == "" {
-				segs = append(segs, refSegs(env, c.Hash)...)
+				var hlRefs []int
+				if hl != nil {
+					hlRefs = hl.refs
+				}
+				segs = append(segs, refSegs(env, c.Hash, hlRefs)...)
 			}
 		case "subject":
 			if r.special != "" {
@@ -226,6 +276,11 @@ func (v *MainView) Row(env *Env, i int) []Seg {
 				continue
 			}
 			subj := ExpandTabs(c.Subject, 1)
+			if hl != nil && len(hl.subject) > 0 {
+				off := 0
+				segs = append(segs, splitMatched(env.Theme, theme.Default, subj, hl.subject, &off)...)
+				continue
+			}
 			limit := env.Cfg.UI.TitleOverflow
 			if opts.TitleOverflow && limit > 0 && len([]rune(subj)) > limit {
 				rs := []rune(subj)
@@ -238,9 +293,19 @@ func (v *MainView) Row(env *Env, i int) []Seg {
 	return segs
 }
 
-// refSegs renders tig-style ref decorations for a commit.
-func refSegs(env *Env, hash string) []Seg {
-	var segs []Seg
+// refPieces is one styled piece of the reference decoration, in the order
+// the pieces are emitted.
+type refPiece struct {
+	role theme.Role
+	text string
+}
+
+// refPieces builds the reference decoration pieces of a commit.
+func refPieces(env *Env, hash string) []refPiece {
+	var pieces []refPiece
+	if env.Head.Branch == "" && env.Head.Hash == hash {
+		pieces = append(pieces, refPiece{theme.RefHead, "[HEAD]"}, refPiece{theme.Default, " "})
+	}
 	for _, ref := range env.Decor[hash] {
 		switch ref.Kind {
 		case git.RefBranch:
@@ -248,22 +313,39 @@ func refSegs(env *Env, hash string) []Seg {
 			if ref.IsHead {
 				role = theme.RefHead
 			}
-			segs = append(segs, Seg{role, "[" + ref.Short + "]"}, Seg{theme.Default, " "})
+			pieces = append(pieces, refPiece{role, "[" + ref.Short + "]"}, refPiece{theme.Default, " "})
 			if ref.WorktreePath != "" && ref.WorktreePath != env.Loc.TopLevel {
-				segs = append(segs, Seg{theme.RefWorktree, "{wt:" + baseName(ref.WorktreePath) + "}"}, Seg{theme.Default, " "})
+				pieces = append(pieces, refPiece{theme.RefWorktree, "{wt:" + baseName(ref.WorktreePath) + "}"}, refPiece{theme.Default, " "})
 			}
 		case git.RefRemote:
-			segs = append(segs, Seg{theme.RefRemote, "{" + ref.Short + "}"}, Seg{theme.Default, " "})
+			pieces = append(pieces, refPiece{theme.RefRemote, "{" + ref.Short + "}"}, refPiece{theme.Default, " "})
 		case git.RefTag:
-			segs = append(segs, Seg{theme.RefTag, "<" + ref.Short + ">"}, Seg{theme.Default, " "})
+			pieces = append(pieces, refPiece{theme.RefTag, "<" + ref.Short + ">"}, refPiece{theme.Default, " "})
 		case git.RefStash:
-			segs = append(segs, Seg{theme.RefStash, "(stash)"}, Seg{theme.Default, " "})
+			pieces = append(pieces, refPiece{theme.RefStash, "(stash)"}, refPiece{theme.Default, " "})
 		default:
-			segs = append(segs, Seg{theme.RefStash, "(" + ref.Short + ")"}, Seg{theme.Default, " "})
+			pieces = append(pieces, refPiece{theme.RefStash, "(" + ref.Short + ")"}, refPiece{theme.Default, " "})
 		}
 	}
-	if env.Head.Branch == "" && env.Head.Hash == hash {
-		segs = append([]Seg{{theme.RefHead, "[HEAD]"}, {theme.Default, " "}}, segs...)
+	return pieces
+}
+
+// refText is refPieces' plain text, used for fuzzy matching of ref names.
+func refText(env *Env, hash string) string {
+	var sb strings.Builder
+	for _, p := range refPieces(env, hash) {
+		sb.WriteString(p.text)
+	}
+	return sb.String()
+}
+
+// refSegs renders tig-style ref decorations for a commit. hl holds optional
+// rune positions to highlight, referring to refText's output.
+func refSegs(env *Env, hash string, hl []int) []Seg {
+	var segs []Seg
+	off := 0
+	for _, p := range refPieces(env, hash) {
+		segs = append(segs, splitMatched(env.Theme, p.role, p.text, hl, &off)...)
 	}
 	return segs
 }
@@ -273,6 +355,109 @@ func (v *MainView) current() *mainRow {
 		return nil
 	}
 	return &v.rows[v.Cursor]
+}
+
+// SetFilter applies a fuzzy query ("" clears it). Filtering keeps the
+// original log order; pseudo rows are hidden while the query is non-empty.
+// The cursor stays on the selected commit while it still matches. When the
+// new query extends the previous one, only the previous result set is
+// scanned.
+func (v *MainView) SetFilter(env *Env, q string) {
+	if len(strings.Fields(q)) == 0 {
+		q = ""
+	}
+	var hash, special string
+	if r := v.current(); r != nil {
+		hash, special = r.commit.Hash, r.special
+	}
+	src := v.all
+	if v.query != "" && strings.HasPrefix(q, v.query) {
+		src = v.rows
+	}
+	v.query = q
+	v.rows = v.filterRows(env, src)
+	v.Cursor = 0
+	for i, r := range v.rows {
+		if r.special == special && (special != "" || r.commit.Hash == hash) {
+			v.Cursor = i
+			break
+		}
+	}
+	v.Clamp(len(v.rows))
+}
+
+// FilterStatus implements Filterable.
+func (v *MainView) FilterStatus() (string, int, int, bool) {
+	return v.query, len(v.rows), len(v.all), v.Loading
+}
+
+// filterRows returns the rows matching the active query, with their match
+// positions computed for highlighting.
+func (v *MainView) filterRows(env *Env, in []mainRow) []mainRow {
+	tokens := strings.Fields(v.query)
+	if len(tokens) == 0 {
+		return in
+	}
+	out := make([]mainRow, 0, len(in))
+	for _, r := range in {
+		if r.special != "" {
+			continue
+		}
+		hl := matchRow(env, r.commit, tokens)
+		if hl == nil {
+			continue
+		}
+		nr := r
+		nr.hl = hl
+		out = append(out, nr)
+	}
+	return out
+}
+
+// matchRow matches all tokens against the filterable fields of a commit:
+// subject, ref names and author (fuzzy) and the commit ID (prefix only).
+// Every token must match at least one field. It returns nil when the row
+// does not match.
+func matchRow(env *Env, c git.Commit, tokens []string) *rowHighlight {
+	refs := refText(env, c.Hash)
+	displayed := FormatAuthor(c.AuthorName, c.AuthorEmail, env.Opts.Author)
+	var hl *rowHighlight
+	for _, tok := range tokens {
+		var h rowHighlight
+		matched := false
+		if pos, ok := fuzzyMatch(tok, ExpandTabs(c.Subject, 1)); ok {
+			matched = true
+			h.subject = pos
+		}
+		if _, ok := fuzzyMatch(tok, c.AuthorName); ok {
+			matched = true
+		}
+		// Highlight positions refer to the formatted author; they exist
+		// only when the token matches it too.
+		if pos, ok := fuzzyMatch(tok, displayed); ok {
+			matched = true
+			h.author = pos
+		}
+		if len(c.Hash) >= len(tok) && strings.HasPrefix(strings.ToLower(c.Hash), strings.ToLower(tok)) {
+			matched = true
+			h.id = len(tok)
+		}
+		if pos, ok := fuzzyMatch(tok, refs); ok {
+			matched = true
+			h.refs = pos
+		}
+		if !matched {
+			return nil
+		}
+		if hl == nil {
+			hl = &rowHighlight{}
+		}
+		hl.subject = unionPos(hl.subject, h.subject)
+		hl.author = unionPos(hl.author, h.author)
+		hl.id = max(hl.id, h.id)
+		hl.refs = unionPos(hl.refs, h.refs)
+	}
+	return hl
 }
 
 func (v *MainView) Enter(env *Env) tea.Cmd {

@@ -42,6 +42,18 @@ type CursorWatcher interface {
 	CursorMoved(env *Env) tea.Cmd
 }
 
+// Filterable is implemented by list views whose rows can be narrowed with a
+// fuzzy filter bar (currently the main view). The app focuses the bar from
+// such a view and routes line editing to it.
+type Filterable interface {
+	View
+	// SetFilter applies a fuzzy query to the rows; an empty query clears it.
+	SetFilter(env *Env, q string)
+	// FilterStatus returns the active query, the number of matching rows,
+	// the number of loaded rows and whether loading is in progress.
+	FilterStatus() (query string, matches, loaded int, loading bool)
+}
+
 // Closer is implemented by views that need to act when closed.
 type Closer interface {
 	Closed(env *Env) tea.Cmd

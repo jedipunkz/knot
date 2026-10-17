@@ -57,6 +57,12 @@ func (v *HelpView) Load(env *Env) tea.Cmd {
 				Seg{theme.Author, Fit(string(a), 24) + " "},
 				Seg{theme.Default, desc})
 		}
+		if view == keymap.Generic && !env.Keys.Bound(keymap.Filter) {
+			// Unbound by default: document it so the action stays discoverable.
+			add(Seg{theme.RefHead, Fit("(unbound)", 18) + " "},
+				Seg{theme.Author, Fit(string(keymap.Filter), 24) + " "},
+				Seg{theme.Default, keymap.Descriptions[keymap.Filter]})
+		}
 	}
 	return nil
 }
@@ -257,6 +263,8 @@ var (
 	_ View = (*HelpView)(nil)
 	_ View = (*OptionsView)(nil)
 	_ View = (*ThemeView)(nil)
+
+	_ Filterable = (*MainView)(nil)
 
 	_ CursorWatcher = (*ThemeView)(nil)
 	_ Closer        = (*ThemeView)(nil)

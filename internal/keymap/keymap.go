@@ -59,6 +59,7 @@ const (
 	FindNext   Action = "find-next"
 	FindPrev   Action = "find-prev"
 	Prompt     Action = "prompt"
+	Filter     Action = "filter"
 
 	ToggleLineNo        Action = "toggle-lineno"
 	ToggleDate          Action = "toggle-date"
@@ -120,7 +121,7 @@ var Descriptions = map[Action]string{
 	ScrollLineUp: "Scroll one line up", ScrollLineDown: "Scroll one line down",
 	ScrollLeft: "Scroll one column left", ScrollRight: "Scroll one column right", ScrollFirstCol: "Scroll to the first column",
 	Search: "Search forward", SearchBack: "Search backward", FindNext: "Find next match", FindPrev: "Find previous match",
-	Prompt:       "Open the command prompt",
+	Prompt: "Open the command prompt", Filter: "Open the fuzzy filter bar",
 	ToggleLineNo: "Toggle line numbers", ToggleDate: "Cycle date display", ToggleAuthor: "Cycle author display",
 	ToggleGraph: "Toggle revision graph", ToggleLineGraphics: "Toggle line graphics (utf-8 / ascii)",
 	ToggleRefs: "Toggle reference display", ToggleIgnoreSpace: "Toggle ignoring whitespace in diffs",
@@ -310,6 +311,18 @@ func isDigits(s string) bool {
 type Binding struct {
 	Key    string
 	Action Action
+}
+
+// Bound reports whether any view binds the action.
+func (km *Keymap) Bound(a Action) bool {
+	for _, vb := range km.bindings {
+		for _, x := range vb {
+			if x == a {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Bindings returns the effective bindings of a view (excluding generic),

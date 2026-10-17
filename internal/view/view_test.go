@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jedipunkz/knot/internal/config"
+	"github.com/jedipunkz/knot/internal/keymap"
 	"github.com/jedipunkz/knot/internal/theme"
 )
 
@@ -110,6 +111,24 @@ func TestStatLineColors(t *testing.T) {
 	segs := tv.Row(env, 0)
 	if len(segs) != 3 || segs[1].Text != "++" || segs[2].Text != "-" {
 		t.Errorf("stat segs = %+v", segs)
+	}
+}
+
+func TestHelpListsUnboundFilter(t *testing.T) {
+	env := testEnv(t)
+	env.Keys = keymap.Default()
+	h := NewHelp()
+	h.Load(env)
+	listed := false
+	for _, row := range h.rows {
+		for _, s := range row {
+			if strings.Contains(s.Text, "filter") {
+				listed = true
+			}
+		}
+	}
+	if !listed {
+		t.Error("the unbound filter action is not listed in the help view")
 	}
 }
 
