@@ -503,6 +503,30 @@ func TestWorktreeEscClearsFilter(t *testing.T) {
 	}
 }
 
+func TestWorktreeCtrlNavMovesCursor(t *testing.T) {
+	main, _ := setupRepo(t)
+	m := newModel(t, main, nil, view.NewWorktree())
+	// Ctrl-N first exits the filter bar, then moves down the list.
+	press(t, m, "ctrl+n")
+	if m.filterBar != nil {
+		t.Fatal("ctrl+n did not move to the list")
+	}
+	cur := m.focused().(*view.WorktreeView).Cursor
+	press(t, m, "ctrl+n")
+	if got := m.focused().(*view.WorktreeView).Cursor; got != cur+1 {
+		t.Fatalf("ctrl+n cursor = %d, want %d", got, cur+1)
+	}
+	press(t, m, "ctrl+p")
+	if got := m.focused().(*view.WorktreeView).Cursor; got != cur {
+		t.Fatalf("ctrl+p cursor = %d, want %d", got, cur)
+	}
+	// Ctrl-P on the first row re-focuses the filter bar.
+	press(t, m, "ctrl+p")
+	if m.filterBar == nil {
+		t.Error("ctrl+p on the first row did not focus the filter bar")
+	}
+}
+
 func TestUserCommandPlaceholders(t *testing.T) {
 	values := map[string]string{"branch": "feat; rm -rf /", "commit": "abc"}
 	t.Setenv("KNOT_TEST_VAR", "x")

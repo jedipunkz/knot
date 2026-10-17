@@ -45,21 +45,6 @@ func (m *Model) key(msg tea.KeyPressMsg) tea.Cmd {
 	if v == nil {
 		return tea.Quit
 	}
-	// Sticky filter views (e.g. worktrees) move between the bar and the
-	// list with Ctrl-P / Ctrl-N wherever the cursor is.
-	if s, ok := v.(view.FilterStarter); ok && s.FilterOnOpen() {
-		if fw, isf := v.(view.Filterable); isf {
-			switch k {
-			case "ctrl+p":
-				q, _, _, _ := fw.FilterStatus()
-				m.filterBar = &filterBar{input: []rune(q)}
-				return nil
-			case "ctrl+n":
-				m.filterBar = nil
-				return nil
-			}
-		}
-	}
 	a, ok := m.env.Keys.Lookup(v.Name(), k)
 	if !ok {
 		if k == "esc" {

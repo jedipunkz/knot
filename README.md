@@ -21,6 +21,12 @@ The design is described in [#1](https://github.com/jedipunkz/knot/issues/1).
 go install github.com/jedipunkz/knot/cmd/knot@latest
 ```
 
+or with Homebrew:
+
+```sh
+brew install --cask jedipunkz/knot
+```
+
 ## Usage
 
 ```
@@ -86,8 +92,10 @@ cherry-pick, checkout, remove / prune worktree) ask for confirmation.
 (`dirty`, `locked`, `prunable`, ahead / behind). `*` marks the active
 worktree and `@` the main worktree. The view opens with the filter bar
 focused: typing narrows the list by path, branch, HEAD commit ID and
-subject; `Ctrl-P` / `Ctrl-N` move between the bar and the list. The
-selected worktree is shown in the key bar area below the list.
+subject. `Enter`, `Ctrl-N` or `Down` return to the list, where
+`Ctrl-N` / `Ctrl-P` (like `j` / `k`) move the cursor; `Ctrl-P` on the
+first row goes back to the bar. The selected worktree is shown in the
+key bar area below the list.
 
 | Key | Action |
 |---|---|
