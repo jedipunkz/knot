@@ -39,7 +39,7 @@ func (v *ReflogView) Load(env *Env) tea.Cmd {
 }
 
 func (v *ReflogView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
-	if m, ok := msg.(loadedMsg); ok {
+	if m, ok := msg.(loadedMsg); ok && !v.stale(m.gen) {
 		v.finish(m.err)
 		v.entries, _ = m.data.([]git.ReflogEntry)
 	}
@@ -110,7 +110,7 @@ func (v *StashView) Load(env *Env) tea.Cmd {
 }
 
 func (v *StashView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
-	if m, ok := msg.(loadedMsg); ok {
+	if m, ok := msg.(loadedMsg); ok && !v.stale(m.gen) {
 		v.finish(m.err)
 		v.stashes, _ = m.data.([]git.Stash)
 	}
@@ -181,7 +181,7 @@ func (v *RefsView) Load(env *Env) tea.Cmd {
 }
 
 func (v *RefsView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
-	if m, ok := msg.(loadedMsg); ok {
+	if m, ok := msg.(loadedMsg); ok && !v.stale(m.gen) {
 		v.finish(m.err)
 		refs, _ := m.data.([]git.Ref)
 		v.refs = v.refs[:0]

@@ -86,21 +86,32 @@ type Base struct {
 
 	search    *regexp.Regexp
 	searchRaw string
+	gen       int // load generation; superseded loads keep producing results
 	cancel    context.CancelFunc
 }
 
 // B returns the base itself (embedding gives every view this method).
 func (b *Base) B() *Base { return b }
 
-// startLoad cancels a running load and returns a fresh context.
-func (b *Base) startLoad() context.Context {
+// startLoad cancels a running load, starts a new one and returns its
+// context and generation. Every async result produced by a load must be
+// stamped with the generation captured at load start; results carrying an
+// older generation belong to a superseded load and are dropped in the
+// HandleMsg paths.
+func (b *Base) startLoad() (context.Context, int) {
 	b.Stop()
+	b.gen++
 	ctx, cancel := context.WithCancel(context.Background())
 	b.cancel = cancel
 	b.Loading = true
 	b.Err = nil
-	return ctx
+	return ctx, b.gen
 }
+
+// stale reports whether an async result stamped with gen belongs to a load
+// that was superseded or cancelled after it started; such a result is
+// ignored by HandleMsg.
+func (b *Base) stale(gen int) bool { return gen != b.gen }
 
 // Stop cancels background loading.
 func (b *Base) Stop() {
@@ -122,6 +133,7 @@ func (b *Base) finish(err error) {
 
 type loadedMsg struct {
 	id   int
+	gen  int // load generation captured at load start
 	data any
 	err  error
 }
@@ -132,11 +144,11 @@ func (m loadedMsg) ViewID() int { return m.id }
 type ViewMsg interface{ ViewID() int }
 
 func (b *Base) load(fn func(ctx context.Context) (any, error)) tea.Cmd {
-	ctx := b.startLoad()
+	ctx, gen := b.startLoad()
 	id := b.ID
 	return func() tea.Msg {
 		data, err := fn(ctx)
-		return loadedMsg{id: id, data: data, err: err}
+		return loadedMsg{id: id, gen: gen, data: data, err: err}
 	}
 }
 

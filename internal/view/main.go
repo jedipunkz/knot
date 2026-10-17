@@ -68,6 +68,7 @@ func (v *MainView) Len() int { return len(v.rows) }
 
 type commitBatchMsg struct {
 	id      int
+	gen     int // load generation captured at load start
 	commits []git.Commit
 	next    tea.Cmd
 	done    bool
@@ -77,14 +78,14 @@ type commitBatchMsg struct {
 func (m commitBatchMsg) ViewID() int { return m.id }
 
 type changesMsg struct {
-	id               int
+	id, gen          int
 	unstaged, staged bool
 }
 
 func (m changesMsg) ViewID() int { return m.id }
 
 func (v *MainView) Load(env *Env) tea.Cmd {
-	ctx := v.startLoad()
+	ctx, gen := v.startLoad()
 	v.all = nil
 	v.rows = nil
 	sym := graph.Unicode
@@ -107,14 +108,14 @@ func (v *MainView) Load(env *Env) tea.Cmd {
 		defer close(ch)
 		err := git.StreamLog(ctx, r, args, 500, func(cs []git.Commit) error {
 			select {
-			case ch <- commitBatchMsg{id: id, commits: cs}:
+			case ch <- commitBatchMsg{id: id, gen: gen, commits: cs}:
 				return nil
 			case <-ctx.Done():
 				return ctx.Err()
 			}
 		})
 		select {
-		case ch <- commitBatchMsg{id: id, done: true, err: err}:
+		case ch <- commitBatchMsg{id: id, gen: gen, done: true, err: err}:
 		case <-ctx.Done():
 		}
 	}()
@@ -122,7 +123,7 @@ func (v *MainView) Load(env *Env) tea.Cmd {
 	wait = func() tea.Msg {
 		m, ok := <-ch
 		if !ok {
-			return commitBatchMsg{id: id, done: true, err: context.Canceled}
+			return commitBatchMsg{id: id, gen: gen, done: true, err: context.Canceled}
 		}
 		if !m.done {
 			m.next = wait
@@ -134,10 +135,10 @@ func (v *MainView) Load(env *Env) tea.Cmd {
 		cmds = append(cmds, func() tea.Msg {
 			st, err := git.ReadStatus(ctx, r)
 			if err != nil {
-				return changesMsg{id: id}
+				return changesMsg{id: id, gen: gen}
 			}
 			var m changesMsg
-			m.id = id
+			m.id, m.gen = id, gen
 			for _, f := range st.Files {
 				if f.Unstaged() {
 					m.unstaged = true
@@ -155,6 +156,11 @@ func (v *MainView) Load(env *Env) tea.Cmd {
 func (v *MainView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
 	switch m := msg.(type) {
 	case commitBatchMsg:
+		if v.stale(m.gen) {
+			// A superseded load's result: drop the batch along with
+			// the rest of its wait chain.
+			return nil
+		}
 		batch := make([]mainRow, 0, len(m.commits))
 		for _, c := range m.commits {
 			v.authorWidth = max(v.authorWidth, len([]rune(FormatAuthor(c.AuthorName, c.AuthorEmail, env.Opts.Author))))
@@ -183,6 +189,9 @@ func (v *MainView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
 		}
 		return m.next
 	case changesMsg:
+		if v.stale(m.gen) {
+			return nil
+		}
 		var pre []mainRow
 		if m.unstaged {
 			pre = append(pre, mainRow{special: "unstaged", commit: git.Commit{Subject: "Unstaged changes"}})

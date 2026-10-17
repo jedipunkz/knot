@@ -186,6 +186,10 @@ func (t *textView) handleText(env *Env, msg tea.Msg, classify func(string) theme
 	if !ok {
 		return false
 	}
+	if t.stale(m.gen) {
+		// A superseded load's result: keep the current content.
+		return true
+	}
 	t.finish(m.err)
 	if m.err != nil {
 		t.setLines(env, nil, classify)
