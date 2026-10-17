@@ -4,7 +4,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 STATICCHECK_VERSION := v0.8.2
 
-.PHONY: all build install run test test-race vet fmt fmt-check lint check clean help
+.PHONY: all build install run test test-race bench vet fmt fmt-check lint check clean help
 
 all: check build
 
@@ -22,6 +22,9 @@ test: ## Run tests
 
 test-race: ## Run tests with the race detector
 	go test -race ./...
+
+bench: ## Run benchmarks (fuzzy filter, graph build)
+	go test -run '^$$' -bench . -benchmem ./internal/view/ ./internal/graph/
 
 vet: ## Run go vet
 	go vet ./...

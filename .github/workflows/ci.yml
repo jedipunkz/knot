@@ -28,3 +28,66 @@ jobs:
         run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
       - name: test
         run: go test -race ./...
+
+  coverage:
+    name: Coverage
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: test with coverage (head)
+        run: |
+          set -o pipefail
+          go test -coverprofile=coverage.out ./... | tee coverage.txt
+      - name: test with coverage (base)
+        run: |
+          set -o pipefail
+          git worktree add "$RUNNER_TEMP/base" "${{ github.event.pull_request.base.sha }}"
+          cd "$RUNNER_TEMP/base"
+          go test -coverprofile="$RUNNER_TEMP/coverage-base.out" ./...
+      - name: compute totals
+        id: totals
+        run: |
+          head=$(go tool cover -func=coverage.out | awk '/^total/ {gsub("%", "", $3); print $3}')
+          base=$(go tool cover -func="$RUNNER_TEMP/coverage-base.out" | awk '/^total/ {gsub("%", "", $3); print $3}')
+          delta=$(awk -v h="$head" -v b="$base" 'BEGIN { printf "%.1f", h - b }')
+          {
+            echo "head=$head"
+            echo "base=$base"
+            echo "delta=$delta"
+          } >> "$GITHUB_OUTPUT"
+      - name: build coverage report
+        run: |
+          {
+            echo "## Test coverage"
+            echo ""
+            echo "| Package | Coverage |"
+            echo "|---|---|"
+            grep '^ok' coverage.txt | \
+              awk '{pkg = $2; sub("github.com/jedipunkz/knot/", "", pkg); printf "| %s | %s |\n", pkg, $5}'
+            echo ""
+            echo "Total (head): ${{ steps.totals.outputs.head }}%"
+            echo "Total (base): ${{ steps.totals.outputs.base }}%"
+            echo "Delta vs base: ${{ steps.totals.outputs.delta }} pp"
+          } > coverage-report.md
+          cat coverage-report.md
+      - name: fail when total coverage drops
+        run: |
+          if awk -v h="${{ steps.totals.outputs.head }}" -v b="${{ steps.totals.outputs.base }}" \
+            'BEGIN { exit (h + 0.5 < b) ? 0 : 1 }'; then
+            echo "::error::Total coverage dropped from ${{ steps.totals.outputs.base }}% to ${{ steps.totals.outputs.head }}% (tolerance 0.5 pp)"
+            exit 1
+          fi
+      - name: post coverage comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: test-coverage
+          path: coverage-report.md

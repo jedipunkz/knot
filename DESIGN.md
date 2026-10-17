@@ -455,6 +455,9 @@ Output modes: `status` shows the last output line in the status bar, `pager` ope
 - `internal/view`: date / author formatting, diff line references, word highlighting, diffstat coloring, navigation and search.
 - `internal/app`: model-level tests that drive `Update` with key messages: worktree switch (stack reset, cursor on HEAD, status bar, `on-switch`, prunable refusal), split navigation, confirmation cancel / accept, checkout blocked for another worktree, user commands (placeholders, no re-expansion, pager output), prompt argument splitting.
 - CI (GitHub Actions): gofmt, `go vet`, staticcheck, `go test -race` on ubuntu-latest and macos-latest.
+- CI coverage gate (pull requests only): coverage profile from head and from the base commit (via `git worktree add`), per-package table posted as a sticky PR comment; the job fails when the total statements coverage drops more than 0.5 pp against base.
+- CI performance gate: benchmarks for the filter hot path (`internal/view`: one filter pass over 500 rows, four `fuzzyMatch` calls per row) and graph construction (`internal/graph`: 1000 commits with merges) compared with `benchstat` head vs base (count 10), posted as a sticky PR comment.
+- CI vulnerability scan: `govulncheck ./...` on pull requests and on a weekly schedule; `make bench` runs the same benchmarks locally.
 
 ## 11. Milestones
 
@@ -466,7 +469,7 @@ Output modes: `status` shows the last output line in the status bar, `pager` ope
 | M4 | blame, stash, reflog, grep, pager (stdin + `:!cmd`) | done |
 | M5 | worktree view and worktree-aware context switching | done |
 | M6 | User commands, placeholders, theme picker, built-in theme set | done |
-| M7 | Polish: mouse, performance on large repos (Linux kernel–sized log), release (goreleaser, Homebrew) | mouse done; performance measurement and release not started |
+| M7 | Polish: mouse, performance on large repos (Linux kernel–sized log), release (goreleaser, Homebrew) | mouse done; benchmark base set (filter pass, graph build, tracked in CI), kernel-sized-log performance and release not started |
 
 ## 12. Open questions
 
