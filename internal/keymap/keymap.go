@@ -374,7 +374,7 @@ var viewBar = map[string][]BarEntry{
 }
 
 var genericBar = []BarEntry{
-	{Enter, "open"}, {ViewClose, "close"}, {Quit, "quit"}, {ViewNext, "next pane"},
+	{Enter, "open"}, {ViewClose, "close"}, {ViewNext, "next pane"},
 	{ViewMain, "main"}, {ViewDiff, "diff"}, {ViewLog, "log"}, {ViewTree, "tree"},
 	{ViewRefs, "refs"}, {ViewStatus, "status"}, {ViewWorktree, "worktree"}, {ViewHelp, "help"},
 	{Refresh, "refresh"}, {Search, "search"}, {Prompt, "prompt"}, {Options, "options"},
