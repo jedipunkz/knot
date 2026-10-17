@@ -105,6 +105,16 @@ func press(t *testing.T, m *Model, keys ...string) {
 			msg = tea.KeyPressMsg{Code: tea.KeyTab}
 		case "down":
 			msg = tea.KeyPressMsg{Code: tea.KeyDown}
+		case "up":
+			msg = tea.KeyPressMsg{Code: tea.KeyUp}
+		case "esc":
+			msg = tea.KeyPressMsg{Code: tea.KeyEscape}
+		case "backspace":
+			msg = tea.KeyPressMsg{Code: tea.KeyBackspace}
+		case "ctrl+p":
+			msg = tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl}
+		case "ctrl+n":
+			msg = tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl}
 		default:
 			r := []rune(k)[0]
 			msg = tea.KeyPressMsg{Code: r, Text: k}
@@ -241,6 +251,102 @@ func TestCheckoutBlockedForOtherWorktree(t *testing.T) {
 	if m.confirm != nil || !strings.Contains(m.status, "checked out in worktree") {
 		t.Errorf("confirm=%v status=%q", m.confirm != nil, m.status)
 	}
+}
+
+func TestMainFilterBar(t *testing.T) {
+	main, _ := setupRepo(t)
+	m := newModel(t, main, nil, view.NewMain(nil, nil))
+	if n := m.focused().Len(); n != 2 {
+		t.Fatalf("rows = %d, want 2", n)
+	}
+	// k at row 0 does not enter the bar.
+	press(t, m, "k")
+	if m.filterBar != nil {
+		t.Fatal("k entered the filter bar")
+	}
+	// Ctrl-P at row 0 enters the bar.
+	press(t, m, "ctrl+p")
+	if m.filterBar == nil {
+		t.Fatal("ctrl+p did not focus the filter bar")
+	}
+	// Typing filters live: "cmone" matches only "commit one" (the subject;
+	// "tw" would also fuzzy-match the {wt:...} ref of the other row).
+	press(t, m, "c", "m", "o", "n", "e")
+	if n := m.focused().Len(); n != 1 {
+		t.Fatalf("filtered rows = %d, want 1", n)
+	}
+	out, cur := m.render()
+	if !strings.Contains(out, "Search: cmone") {
+		t.Errorf("render = %q", firstLine(out))
+	}
+	if !strings.Contains(out, "1/2") {
+		t.Errorf("render has no match count: %q", firstLine(out))
+	}
+	if cur == nil {
+		t.Error("no cursor on the filter bar")
+	}
+	// Ctrl-P inside the bar does nothing.
+	press(t, m, "ctrl+p")
+	if m.filterBar == nil || string(m.filterBar.input) != "cmone" {
+		t.Fatalf("ctrl+p inside the bar changed state: %q", string(m.filterBar.input))
+	}
+	// Enter returns to the list with the filter kept, cursor on the match.
+	press(t, m, "enter")
+	if m.filterBar != nil {
+		t.Error("enter did not leave the bar")
+	}
+	if n := m.focused().Len(); n != 1 {
+		t.Fatalf("rows after enter = %d, want 1", n)
+	}
+	one := m.focused().Selection(m.env).Commit
+	if one == "" {
+		t.Fatal("no selection")
+	}
+	// Esc in the filtered list clears the filter and keeps the commit.
+	press(t, m, "esc")
+	if n := m.focused().Len(); n != 2 {
+		t.Fatalf("rows after esc = %d, want 2", n)
+	}
+	if sel := m.focused().Selection(m.env); sel.Commit != one {
+		t.Errorf("selection after esc = %q, want %q", sel.Commit, one)
+	}
+	// Up reaches row 0, then the next Up enters the bar.
+	press(t, m, "up")
+	if m.filterBar != nil {
+		t.Fatal("up above row 0 entered the bar")
+	}
+	press(t, m, "up")
+	if m.filterBar == nil {
+		t.Error("up at row 0 did not enter the bar")
+	}
+	// Ctrl-N returns to the list keeping the filter.
+	press(t, m, "c", "m", "o", "n", "e", "ctrl+n")
+	if m.filterBar != nil || m.focused().Len() != 1 {
+		t.Fatalf("after ctrl+n: bar=%v rows=%d", m.filterBar != nil, m.focused().Len())
+	}
+	// Esc in the bar clears the query and restores the full list.
+	press(t, m, "up", "esc")
+	if m.filterBar != nil || m.focused().Len() != 2 {
+		t.Fatalf("esc in the bar: bar=%v rows=%d", m.filterBar != nil, m.focused().Len())
+	}
+	// The filter action is unbound by default but bindable.
+	m.env.Keys.Bind("main", "P", keymap.Filter)
+	press(t, m, "P")
+	if m.filterBar == nil {
+		t.Fatal("bound filter key did not open the bar")
+	}
+	press(t, m, "ctrl+c")
+	if m.filterBar != nil || m.focused().Len() != 2 {
+		t.Fatalf("ctrl+c in the bar: bar=%v rows=%d", m.filterBar != nil, m.focused().Len())
+	}
+}
+
+// firstLine returns the first line of a rendered screen.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 func TestUserCommandPlaceholders(t *testing.T) {

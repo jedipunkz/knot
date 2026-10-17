@@ -29,6 +29,11 @@ type prompt struct {
 	onSubmit func(string) tea.Cmd
 }
 
+// filterBar holds the state of the fuzzy filter bar of the focused view.
+type filterBar struct {
+	input []rune
+}
+
 type panel struct {
 	x, y, w, h int
 	idx        int // index into the stack
@@ -47,6 +52,7 @@ type Model struct {
 	status    string
 	statusErr bool
 	prompt    *prompt
+	filterBar *filterBar
 	confirm   *view.ConfirmMsg
 	autoTheme bool
 	panels    []panel
@@ -206,8 +212,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m, m.key(msg)
 	case tea.PasteMsg:
-		if m.prompt != nil {
-			m.prompt.input = append(m.prompt.input, []rune(strings.ReplaceAll(msg.Content, "\n", " "))...)
+		content := []rune(strings.ReplaceAll(msg.Content, "\n", " "))
+		switch {
+		case m.prompt != nil:
+			m.prompt.input = append(m.prompt.input, content...)
+		case m.filterBar != nil:
+			m.filterBar.input = append(m.filterBar.input, content...)
+			if f, ok := m.focused().(view.Filterable); ok {
+				m.setFilter(f, string(m.filterBar.input))
+			}
 		}
 		return m, nil
 	case tea.MouseWheelMsg:
@@ -363,6 +376,9 @@ func (m *Model) key(msg tea.KeyPressMsg) tea.Cmd {
 	if m.prompt != nil {
 		return m.promptKey(msg)
 	}
+	if m.filterBar != nil {
+		return m.filterKey(msg)
+	}
 	m.setStatus("", false)
 	v := m.focused()
 	if v == nil {
@@ -370,6 +386,14 @@ func (m *Model) key(msg tea.KeyPressMsg) tea.Cmd {
 	}
 	a, ok := m.env.Keys.Lookup(v.Name(), k)
 	if !ok {
+		if k == "esc" {
+			// Esc clears the filter of a filtered list.
+			if f, ok := v.(view.Filterable); ok {
+				if q, _, _, _ := f.FilterStatus(); q != "" {
+					m.setFilter(f, "")
+				}
+			}
+		}
 		return nil
 	}
 	return m.dispatch(a)
@@ -385,24 +409,82 @@ func (m *Model) promptKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "enter":
 		m.prompt = nil
 		return p.onSubmit(string(p.input))
+	default:
+		editInput(&p.input, msg)
+	}
+	return nil
+}
+
+// editInput applies the line-editing keys shared by the prompt and the
+// filter bar. It reports whether the input changed.
+func editInput(input *[]rune, msg tea.KeyPressMsg) bool {
+	switch msg.String() {
 	case "backspace", "ctrl+h":
-		if len(p.input) > 0 {
-			p.input = p.input[:len(p.input)-1]
+		if len(*input) > 0 {
+			*input = (*input)[:len(*input)-1]
+			return true
 		}
 	case "ctrl+u":
-		p.input = nil
-	case "ctrl+w":
-		s := strings.TrimRight(string(p.input), " ")
-		if i := strings.LastIndex(s, " "); i >= 0 {
-			p.input = []rune(s[:i+1])
-		} else {
-			p.input = nil
+		if len(*input) > 0 {
+			*input = nil
+			return true
 		}
+	case "ctrl+w":
+		s := strings.TrimRight(string(*input), " ")
+		if i := strings.LastIndex(s, " "); i >= 0 {
+			*input = []rune(s[:i+1])
+		} else {
+			*input = nil
+		}
+		return true
 	case "space":
-		p.input = append(p.input, ' ')
+		*input = append(*input, ' ')
+		return true
 	default:
 		if msg.Text != "" && msg.Mod&^tea.ModShift == 0 {
-			p.input = append(p.input, []rune(msg.Text)...)
+			*input = append(*input, []rune(msg.Text)...)
+			return true
+		}
+	}
+	return false
+}
+
+// enterFilter focuses the filter bar of the focused filterable view,
+// showing the current query if one is active.
+func (m *Model) enterFilter(f view.Filterable) tea.Cmd {
+	q, _, _, _ := f.FilterStatus()
+	m.filterBar = &filterBar{input: []rune(q)}
+	return nil
+}
+
+// setFilter applies q to a filterable view.
+func (m *Model) setFilter(f view.Filterable, q string) {
+	f.SetFilter(m.env, q)
+}
+
+// filterKey handles keys while the filter bar is focused.
+func (m *Model) filterKey(msg tea.KeyPressMsg) tea.Cmd {
+	f, ok := m.focused().(view.Filterable)
+	if !ok {
+		m.filterBar = nil
+		return nil
+	}
+	switch msg.String() {
+	case "esc", "ctrl+c", "ctrl+g":
+		// Clear the query and restore the full list; the cursor moves back
+		// to the commit selected before entering (kept by SetFilter).
+		m.filterBar = nil
+		m.setStatus("", false)
+		m.setFilter(f, "")
+	case "enter", "ctrl+n", "down":
+		// Focus the list with the filter kept, cursor on the first match.
+		m.filterBar = nil
+		f.B().SetCursor(0, f.Len())
+	case "ctrl+p", "up":
+		// No-op inside the bar.
+	default:
+		if editInput(&m.filterBar.input, msg) {
+			m.setFilter(f, string(m.filterBar.input))
 		}
 	}
 	return nil
@@ -526,6 +608,13 @@ func (m *Model) dispatch(a keymap.Action) tea.Cmd {
 			}
 			return cmd
 		}
+		if a == keymap.Previous {
+			// Previous on the first row of a filterable view focuses the
+			// filter bar (Ctrl-P / Up).
+			if f, ok := v.(view.Filterable); ok && v.B().Cursor == 0 {
+				return m.enterFilter(f)
+			}
+		}
 		return m.navigate(v, a)
 	case keymap.MoveUp, keymap.MoveDown, keymap.MovePageUp, keymap.MovePageDown, keymap.MoveHalfPageUp,
 		keymap.MoveHalfPageDown, keymap.MoveFirstLine, keymap.MoveLastLine, keymap.ScrollLineUp,
@@ -552,6 +641,11 @@ func (m *Model) dispatch(a keymap.Action) tea.Cmd {
 		return m.find(v, 1)
 	case keymap.FindPrev:
 		return m.find(v, -1)
+	case keymap.Filter:
+		if f, ok := v.(view.Filterable); ok {
+			return m.enterFilter(f)
+		}
+		return view.Status(fmt.Sprintf("filter is not available in the %s view", v.Name()))
 	case keymap.Prompt:
 		m.prompt = &prompt{label: ":", onSubmit: m.runPrompt}
 		return nil
@@ -701,6 +795,7 @@ func (m *Model) render() (string, *tea.Cursor) {
 	avail := max(h-1, 2)
 	m.panels = m.panels[:0]
 	var body string
+	var barCur *tea.Cursor
 	if len(m.stack) == 0 {
 		body = strings.Repeat("\n", avail-1)
 	} else if m.split() {
@@ -716,8 +811,12 @@ func (m *Model) render() (string, *tea.Cursor) {
 		if dir == "vertical" {
 			cw := int(float64(w) * ratio)
 			pw := w - cw - 1
-			left := m.renderPanel(pi, 0, 0, pw, avail)
-			right := m.renderPanel(ci, pw+1, 0, cw, avail)
+			left, c1 := m.renderPanel(pi, 0, 0, pw, avail)
+			right, c2 := m.renderPanel(ci, pw+1, 0, cw, avail)
+			barCur = c1
+			if c2 != nil {
+				barCur = c2
+			}
 			sep := th.Render(theme.TitleBlur, "│")
 			if m.env.Opts.ASCII {
 				sep = th.Render(theme.TitleBlur, "|")
@@ -737,20 +836,41 @@ func (m *Model) render() (string, *tea.Cursor) {
 			if ph < 2 {
 				ph, ch = 2, avail-2
 			}
-			body = m.renderPanel(pi, 0, 0, w, ph) + "\n" + m.renderPanel(ci, 0, ph, w, ch)
+			top, c1 := m.renderPanel(pi, 0, 0, w, ph)
+			bottom, c2 := m.renderPanel(ci, 0, ph, w, ch)
+			body = top + "\n" + bottom
+			barCur = c1
+			if c2 != nil {
+				barCur = c2
+			}
 		}
 	} else {
-		body = m.renderPanel(len(m.stack)-1, 0, 0, w, avail)
+		var c *tea.Cursor
+		body, c = m.renderPanel(len(m.stack)-1, 0, 0, w, avail)
+		barCur = c
 	}
 	line, cursor := m.statusLine(w, h-1)
+	if barCur != nil {
+		cursor = barCur
+	}
 	return body + "\n" + line, cursor
 }
 
-// renderPanel draws a view with its title bar below the content.
-func (m *Model) renderPanel(idx, x, y, w, h int) string {
+// renderPanel draws a view with its filter bar (when active) above the
+// content and its title bar below the content.
+func (m *Model) renderPanel(idx, x, y, w, h int) (string, *tea.Cursor) {
 	v := m.stack[idx].v
-	m.panels = append(m.panels, panel{x: x, y: y, w: w, h: h - 1, idx: idx})
-	content := view.Render(m.env, v, w, h-1)
+	var cur *tea.Cursor
+	bar := ""
+	barH := 0
+	if f, ok := v.(view.Filterable); ok && idx == m.focusedIdx() {
+		if q, _, _, _ := f.FilterStatus(); m.filterBar != nil || q != "" {
+			barH = 1
+			bar, cur = m.filterBarRow(f, x, y, w)
+		}
+	}
+	m.panels = append(m.panels, panel{x: x, y: y + barH, w: w, h: h - 1 - barH, idx: idx})
+	content := view.Render(m.env, v, w, h-1-barH)
 	role := theme.TitleBlur
 	if idx == m.focusedIdx() {
 		role = theme.TitleFocus
@@ -761,13 +881,47 @@ func (m *Model) renderPanel(idx, x, y, w, h int) string {
 	}
 	pos := view.Position(v)
 	gap := w - ansi.StringWidth(title) - ansi.StringWidth(pos) - 2
-	var bar string
+	var bar2 string
 	if gap >= 1 {
-		bar = " " + title + strings.Repeat(" ", gap) + pos + " "
+		bar2 = " " + title + strings.Repeat(" ", gap) + pos + " "
 	} else {
-		bar = view.Fit(" "+title, w)
+		bar2 = view.Fit(" "+title, w)
 	}
-	return content + "\n" + m.env.Theme.Render(role, view.Fit(bar, w))
+	parts := []string{content, m.env.Theme.Render(role, view.Fit(bar2, w))}
+	if bar != "" {
+		parts = append([]string{bar}, parts...)
+	}
+	return strings.Join(parts, "\n"), cur
+}
+
+// filterBarRow renders the one-row filter bar shown at the top of a
+// filterable view's panel. While the query is non-empty it stays visible
+// with "<matches>/<loaded>" on the right side.
+func (m *Model) filterBarRow(f view.Filterable, x, y, w int) (string, *tea.Cursor) {
+	th := m.env.Theme
+	q, matches, loaded, loading := f.FilterStatus()
+	text := "Search: "
+	if m.filterBar != nil {
+		text += string(m.filterBar.input)
+	} else {
+		text += q
+	}
+	right := fmt.Sprintf("%d/%d", matches, loaded)
+	if loading {
+		right += "…"
+	}
+	gap := w - ansi.StringWidth(text) - ansi.StringWidth(right) - 2
+	var row string
+	if gap >= 1 {
+		row = " " + text + strings.Repeat(" ", gap) + right + " "
+	} else {
+		row = view.Fit(" "+text, w)
+	}
+	var cur *tea.Cursor
+	if m.filterBar != nil {
+		cur = tea.NewCursor(x+min(ansi.StringWidth(" "+text), w-1), y)
+	}
+	return th.Render(theme.Prompt, view.Fit(row, w)), cur
 }
 
 func (m *Model) statusLine(w, y int) (string, *tea.Cursor) {
