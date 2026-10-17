@@ -46,6 +46,7 @@ type UI struct {
 	Mouse           bool    `toml:"mouse"`
 	TabSize         int     `toml:"tab-size"`
 	TitleOverflow   int     `toml:"title-overflow"`
+	KeyBar          bool    `toml:"keybar"`
 }
 
 // Main holds main view options.
@@ -131,6 +132,7 @@ func Default() *Config {
 			Mouse:          true,
 			TabSize:        8,
 			TitleOverflow:  50,
+			KeyBar:         true,
 		},
 		Main: Main{
 			Columns:        []string{"date", "author", "commit-id", "graph", "refs", "subject"},

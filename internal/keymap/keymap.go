@@ -325,6 +325,68 @@ func (km *Keymap) Bound(a Action) bool {
 	return false
 }
 
+// KeysOf returns the effective bindings of action in the view
+// (view-specific ones first, then generic ones not removed by a "none"
+// override in the view), each used key once.
+func (km *Keymap) KeysOf(view string, a Action) []string {
+	var keys []string
+	decided := map[string]bool{}
+	if vb, ok := km.bindings[view]; ok {
+		for k, x := range vb {
+			decided[k] = true
+			if x == a {
+				keys = append(keys, k)
+			}
+		}
+	}
+	for k, x := range km.bindings[Generic] {
+		if x == a && !decided[k] {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// BarEntry is one curated hint of the key bar shown above the status bar.
+type BarEntry struct {
+	Action Action
+	Text   string
+}
+
+// viewBar lists the curated key bar hints per view, most important first.
+// Keys are resolved against the live keymap, so rebinding is reflected.
+var viewBar = map[string][]BarEntry{
+	"main": {
+		{MoveHead, "head"},
+		{CherryPick, "cherry-pick"},
+	},
+	"diff":   {{Edit, "edit"}},
+	"blob":   {{Edit, "edit"}},
+	"blame":  {{Parent, "parent"}, {Edit, "edit"}},
+	"tree":   {{Parent, "parent"}},
+	"status": {{StatusUpdate, "stage"}, {StatusRevert, "discard"}, {StatusMerge, "mergetool"}, {StatusCommit, "commit"}},
+	"stage":  {{StatusUpdate, "chunk"}, {StageUpdateLine, "line"}, {StageNext, "next chunk"}, {StatusCommit, "commit"}},
+	"refs":   {{Checkout, "checkout"}, {BranchDelete, "delete"}},
+	"stash":  {{StashApply, "apply"}, {StashPop, "pop"}, {StashDrop, "drop"}},
+	"worktree": {{Enter, "switch"}, {WorktreeAdd, "add"}, {WorktreeRemove, "remove"},
+		{WorktreeLock, "lock"}, {WorktreePrune, "prune"}, {WorktreeOpen, "shell"}},
+}
+
+var genericBar = []BarEntry{
+	{Enter, "open"}, {ViewClose, "close"}, {Quit, "quit"}, {ViewNext, "next pane"},
+	{ViewMain, "main"}, {ViewDiff, "diff"}, {ViewLog, "log"}, {ViewTree, "tree"},
+	{ViewRefs, "refs"}, {ViewStatus, "status"}, {ViewWorktree, "worktree"}, {ViewHelp, "help"},
+	{Refresh, "refresh"}, {Search, "search"}, {Prompt, "prompt"}, {Options, "options"},
+	{ThemePicker, "theme"},
+}
+
+// Bar returns the key bar entries for a view: the view-specific hints
+// first, then the generic ones.
+func Bar(view string) []BarEntry {
+	return append(append([]BarEntry{}, viewBar[view]...), genericBar...)
+}
+
 // Bindings returns the effective bindings of a view (excluding generic),
 // sorted by action then key. Removed bindings are omitted.
 func (km *Keymap) Bindings(view string) []Binding {

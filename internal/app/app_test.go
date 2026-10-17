@@ -352,6 +352,41 @@ func TestMainFilterBar(t *testing.T) {
 	}
 }
 
+func TestKeyBar(t *testing.T) {
+	main, _ := setupRepo(t)
+	m := newModel(t, main, nil, view.NewMain(nil, nil))
+	// The curated entries resolve against the live keymap.
+	out, _ := m.render()
+	for _, want := range []string{"head", "cherry-pick"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("keybar missing %q", want)
+		}
+	}
+	// Deep entries appear when the bar has room.
+	if !strings.Contains(m.keybarRow(200), "prompt") {
+		t.Error("keybar entry for the prompt missing")
+	}
+	// The keybar sits on its own row directly above the status bar.
+	lines := strings.Split(out, "\n")
+	bar, status := lines[len(lines)-2], lines[len(lines)-1]
+	if !strings.Contains(bar, "close") || strings.Contains(status, "close") {
+		t.Errorf("keybar = %q, status = %q", bar, status)
+	}
+	// While the filter bar holds the focus no keybar is shown.
+	press(t, m, "ctrl+p")
+	out, _ = m.render()
+	if strings.Contains(out, "cherry-pick") {
+		t.Error("keybar shown while the filter bar is focused")
+	}
+	press(t, m, "esc")
+	// ui.keybar = false hides the row.
+	m.env.Cfg.UI.KeyBar = false
+	out, _ = m.render()
+	if strings.Contains(out, "cherry-pick") {
+		t.Error("keybar shown with ui.keybar = false")
+	}
+}
+
 func TestLoadingSpinner(t *testing.T) {
 	main, _ := setupRepo(t)
 	m := newModel(t, main, nil, view.NewMain(nil, nil))

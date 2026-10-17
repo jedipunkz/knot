@@ -84,3 +84,42 @@ func TestNormalizeKey(t *testing.T) {
 		}
 	}
 }
+
+func TestBar(t *testing.T) {
+	km := Default()
+	// The keys of the curated entries resolve against the live keymap.
+	if keys := km.KeysOf("status", StatusUpdate); len(keys) == 0 || keys[0] != "u" {
+		t.Errorf("status stage keys = %v", keys)
+	}
+	if keys := km.KeysOf("main", CherryPick); len(keys) == 0 || keys[0] != "C" {
+		t.Errorf("cherry-pick keys = %v", keys)
+	}
+	// View-specific hints come first, then generic ones; generic
+	// actions keep their binding wherever they live.
+	bar := Bar("status")
+	if bar[0].Action != StatusUpdate {
+		t.Errorf("bar starts with %+v", bar[0])
+	}
+	found := false
+	for _, e := range bar {
+		if e.Action == Quit {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("quit missing from the bar")
+	}
+	// Rebinding moves the displayed key; removed actions drop out.
+	km.Bind("main", "H", None)
+	km.Bind("main", "G", MoveHead)
+	if keys := km.KeysOf("main", MoveHead); len(keys) != 1 || keys[0] != "G" {
+		t.Errorf("move-head keys = %v, want [G]", keys)
+	}
+	if km.KeysOf("main", ViewMain)[0] != "m" {
+		t.Errorf("view-main key = %q", km.KeysOf("main", ViewMain)[0])
+	}
+	// The generic "H" does not leak back into a view that removed it.
+	if keys := km.KeysOf("stage", MoveHead); len(keys) == 0 || keys[0] != "H" {
+		t.Errorf("stage move-head = %v", keys)
+	}
+}

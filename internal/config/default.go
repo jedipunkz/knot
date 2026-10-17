@@ -23,6 +23,7 @@ show-line-numbers = false
 mouse             = true
 tab-size          = 8
 title-overflow    = 50            # highlight subjects longer than this ($ toggles)
+keybar            = true          # show the key hints above the status bar
 
 [main]
 columns          = ["date", "author", "commit-id", "graph", "refs", "subject"]
