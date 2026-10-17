@@ -100,14 +100,10 @@ func TestBar(t *testing.T) {
 	if bar[0].Action != StatusUpdate {
 		t.Errorf("bar starts with %+v", bar[0])
 	}
-	found := false
 	for _, e := range bar {
 		if e.Action == Quit {
-			found = true
+			t.Error("quit listed twice (q close covers it)")
 		}
-	}
-	if !found {
-		t.Error("quit missing from the bar")
 	}
 	// Rebinding moves the displayed key; removed actions drop out.
 	km.Bind("main", "H", None)
