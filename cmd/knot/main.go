@@ -272,7 +272,7 @@ func run() error {
 		return err
 	}
 	if c.line > 0 {
-		initial.B().Cursor = c.line - 1
+		initial.B().PendingLine = c.line
 	}
 
 	opts := []tea.ProgramOption{}
