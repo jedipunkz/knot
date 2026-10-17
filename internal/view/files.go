@@ -80,7 +80,7 @@ func (v *TreeView) Load(env *Env) tea.Cmd {
 }
 
 func (v *TreeView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
-	if m, ok := msg.(loadedMsg); ok {
+	if m, ok := msg.(loadedMsg); ok && !v.stale(m.gen) {
 		v.finish(m.err)
 		v.entries, _ = m.data.([]git.TreeEntry)
 		v.Clamp(v.Len())
@@ -258,7 +258,7 @@ func (v *BlameView) Load(env *Env) tea.Cmd {
 }
 
 func (v *BlameView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
-	if m, ok := msg.(loadedMsg); ok {
+	if m, ok := msg.(loadedMsg); ok && !v.stale(m.gen) {
 		v.finish(m.err)
 		v.lines, _ = m.data.([]git.BlameLine)
 		if v.Line > 0 {
@@ -409,6 +409,9 @@ func (v *GrepView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
 		v.Args = []string{"-e", m.pattern}
 		return v.Load(env)
 	case loadedMsg:
+		if v.stale(m.gen) {
+			return nil
+		}
 		v.finish(m.err)
 		v.matches, _ = m.data.([]git.GrepMatch)
 		v.rows = v.rows[:0]

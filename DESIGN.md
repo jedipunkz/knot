@@ -98,7 +98,7 @@ type View interface {
     Len() int
     Row(env *Env, i int) []Seg               // styled segments; rendered with the current theme
     Load(env *Env) tea.Cmd                   // start (re)loading, cancellable
-    HandleMsg(env *Env, msg tea.Msg) tea.Cmd // async results addressed to this view
+    HandleMsg(env *Env, msg tea.Msg) tea.Cmd // async results; stale results from superseded loads are dropped via a per-view load generation
     Enter(env *Env) tea.Cmd                  // open the selected line
     Do(env *Env, a keymap.Action) (tea.Cmd, bool) // view-specific actions
     Selection(env *Env) Selection            // commit / ref / file / line / worktree under cursor

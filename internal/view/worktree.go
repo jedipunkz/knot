@@ -47,6 +47,7 @@ func (v *WorktreeView) Len() int              { return len(v.rows) }
 
 type worktreeListMsg struct {
 	id   int
+	gen  int // load generation captured at load start
 	rows []worktreeRow
 	err  error
 }
@@ -54,21 +55,21 @@ type worktreeListMsg struct {
 func (m worktreeListMsg) ViewID() int { return m.id }
 
 type dirtyMsg struct {
-	id    int
-	dirty map[string]bool
+	id, gen int
+	dirty   map[string]bool
 }
 
 func (m dirtyMsg) ViewID() int { return m.id }
 
 func (v *WorktreeView) Load(env *Env) tea.Cmd {
-	ctx := v.startLoad()
+	ctx, gen := v.startLoad()
 	r := env.Git()
 	id := v.ID
 	refs := env.Refs
 	return func() tea.Msg {
 		wts, err := git.ListWorktrees(ctx, r)
 		if err != nil {
-			return worktreeListMsg{id: id, err: err}
+			return worktreeListMsg{id: id, gen: gen, err: err}
 		}
 		rows := make([]worktreeRow, len(wts))
 		var hashes []string
@@ -97,13 +98,13 @@ func (v *WorktreeView) Load(env *Env) tea.Cmd {
 		for i := range rows {
 			rows[i].subject = subjects[rows[i].wt.Head]
 		}
-		return worktreeListMsg{id: id, rows: rows}
+		return worktreeListMsg{id: id, gen: gen, rows: rows}
 	}
 }
 
 // dirtyCheck runs git status in every worktree with limited concurrency.
 func (v *WorktreeView) dirtyCheck(env *Env) tea.Cmd {
-	ctx := v.startLoad()
+	ctx, gen := v.startLoad()
 	id := v.ID
 	var paths []string
 	for _, r := range v.rows {
@@ -137,13 +138,16 @@ func (v *WorktreeView) dirtyCheck(env *Env) tea.Cmd {
 			}(p)
 		}
 		wg.Wait()
-		return dirtyMsg{id: id, dirty: res}
+		return dirtyMsg{id: id, gen: gen, dirty: res}
 	}
 }
 
 func (v *WorktreeView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
 	switch m := msg.(type) {
 	case worktreeListMsg:
+		if v.stale(m.gen) {
+			return nil
+		}
 		v.finish(m.err)
 		if m.err != nil {
 			v.all, v.rows = nil, nil
@@ -156,6 +160,9 @@ func (v *WorktreeView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
 			return v.dirtyCheck(env)
 		}
 	case dirtyMsg:
+		if v.stale(m.gen) {
+			return nil
+		}
 		v.finish(nil)
 		for i := range v.all {
 			if d, ok := m.dirty[v.all[i].wt.Path]; ok {

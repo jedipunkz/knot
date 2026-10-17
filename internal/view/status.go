@@ -50,7 +50,7 @@ func (v *StatusView) Load(env *Env) tea.Cmd {
 
 func (v *StatusView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
 	m, ok := msg.(loadedMsg)
-	if !ok {
+	if !ok || v.stale(m.gen) {
 		return nil
 	}
 	v.finish(m.err)
@@ -279,7 +279,7 @@ func (v *StageView) Load(env *Env) tea.Cmd {
 
 func (v *StageView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
 	m, ok := msg.(loadedMsg)
-	if !ok {
+	if !ok || v.stale(m.gen) {
 		return nil
 	}
 	v.finish(m.err)
