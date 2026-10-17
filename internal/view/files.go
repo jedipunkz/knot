@@ -117,6 +117,12 @@ func (v *TreeView) Enter(env *Env) tea.Cmd {
 		}
 		return nil
 	}
+	// Git trees may legally contain entry names with ".." or "/"
+	// (DESIGN.md 9.4: repo-injected values are never re-interpreted).
+	// Refuse them so navigation cannot leave the revision directory.
+	if e.Name == ".." || strings.Contains(e.Name, "/") {
+		return Errorf(fmt.Errorf("refusing to open the crafted tree entry %q", e.Name))
+	}
 	switch e.Type {
 	case "tree":
 		v.history = append(v.history, v.Cursor)
@@ -194,10 +200,24 @@ func (v *BlobView) Load(env *Env) tea.Cmd {
 // readWorktreeFile reads a file below the worktree root as lines.
 func readWorktreeFile(root, p string) ([]string, error) {
 	full := filepath.Join(root, filepath.FromSlash(p))
-	if rel, err := filepath.Rel(root, full); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if rel, err := filepath.Rel(root, full); err != nil || rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return nil, fmt.Errorf("%s is outside the worktree", p)
 	}
-	b, err := os.ReadFile(full)
+	// Symlinks inside the worktree may point outside of it (like
+	// /etc/shadow); resolve them and keep the resolved path contained,
+	// mirroring git.DeleteUntracked.
+	reRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, err
+	}
+	reFull, err := filepath.EvalSymlinks(full)
+	if err != nil {
+		return nil, err
+	}
+	if rel, err := filepath.Rel(reRoot, reFull); err != nil || rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("%s is outside the worktree", p)
+	}
+	b, err := os.ReadFile(reFull)
 	if err != nil {
 		return nil, err
 	}

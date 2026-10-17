@@ -87,18 +87,66 @@ func expandArgv(argv []string, values map[string]string) []string {
 	return out
 }
 
+// userCancel is the registration of one in-flight captured user command.
+// Model fields are only touched from the Update loop; the command result
+// travels back through Update (wrapped in userDoneMsg) to deregister.
+type userCancel struct {
+	id int
+}
+
+// userDoneMsg wraps the result message of a captured user command so that
+// Update can deregister its cancellation entry single-threaded.
+type userDoneMsg struct {
+	id  int
+	msg tea.Msg
+}
+
+// registerCaptured creates a cancellable context for a captured user
+// command and registers its cancellation. It must only run from the
+// Update loop.
+func (m *Model) registerCaptured() (context.Context, int) {
+	ctx, cancel := context.WithCancel(context.Background())
+	id := m.nextUserCmd
+	m.nextUserCmd++
+	m.userCancels[id] = cancel
+	return ctx, id
+}
+
+// runCapturedCmd registers a cancellation and returns a command running
+// argv; the returned message deregisters the entry again.
+func (m *Model) runCapturedCmd(argv []string, output, label string) tea.Cmd {
+	ctx, id := m.registerCaptured()
+	return func() tea.Msg {
+		return userDoneMsg{id: id, msg: m.runCaptured(ctx, argv, output, label)}
+	}
+}
+
 func (m *Model) runCommand(c config.Command, sel view.Selection) tea.Cmd {
 	argv := expandArgv(c.Argv, placeholders(m.env, sel))
 	label := strings.Join(argv, " ")
+
+	// Captured commands run with a cancellable context created here (in
+	// the Update loop) and cancellable through StopLoading. suspend
+	// commands are handed to the terminal and not cancellable.
+	var ctx context.Context // non-nil when captured
+	id := -1
+	if c.Output != "suspend" {
+		ctx, id = m.registerCaptured()
+	}
+
 	run := func() tea.Msg {
 		if c.Output == "suspend" {
 			cmd := exec.Command(argv[0], argv[1:]...)
 			cmd.Dir = m.env.WorktreeDir()
 			return view.ExecMsg{Cmd: cmd}
 		}
-		return m.runCaptured(argv, c.Output, label)()
+		return userDoneMsg{id: id, msg: m.runCaptured(ctx, argv, c.Output, label)}
 	}
 	if c.Confirm {
+		// The registration stays while the form is open; closing the
+		// form without running drops it (the key form handler keeps
+		// the entry alive when the command is confirmed).
+		m.formUserCancel = &userCancel{id: id}
 		return view.Msg(view.ConfirmMsg{Question: "Run " + label + "?", OnYes: run})
 	}
 	return run
@@ -106,44 +154,41 @@ func (m *Model) runCommand(c config.Command, sel view.Selection) tea.Cmd {
 
 // runCaptured runs argv without a terminal and shows the output according
 // to the output mode (status | pager | none).
-func (m *Model) runCaptured(argv []string, output, label string) tea.Cmd {
-	dir := m.env.WorktreeDir()
-	return func() tea.Msg {
-		cmd := exec.CommandContext(context.Background(), argv[0], argv[1:]...)
-		cmd.Dir = dir
-		var out bytes.Buffer
-		cmd.Stdout = &out
-		cmd.Stderr = &out
-		err := cmd.Run()
-		text := strings.TrimRight(out.String(), "\n")
-		if err != nil {
-			var ee *exec.ExitError
-			msg := err.Error()
-			if errors.As(err, &ee) && text != "" {
-				msg = lastLine(text)
-			}
-			if output == "pager" && text != "" {
-				return tea.BatchMsg{view.Msg(view.OpenMsg{View: view.NewPager(label, strings.Split(text, "\n"))}),
-					view.Errorf(fmt.Errorf("%s: %s", label, msg))}
-			}
-			return tea.BatchMsg{view.Errorf(fmt.Errorf("%s: %s", label, msg)), view.Msg(view.ReloadMsg{})}
+func (m *Model) runCaptured(ctx context.Context, argv []string, output, label string) tea.Msg {
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir = m.env.WorktreeDir()
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	err := cmd.Run()
+	text := strings.TrimRight(out.String(), "\n")
+	if err != nil {
+		var ee *exec.ExitError
+		msg := err.Error()
+		if errors.As(err, &ee) && text != "" {
+			msg = lastLine(text)
 		}
-		switch output {
-		case "pager":
-			var lines []string
-			if text != "" {
-				lines = strings.Split(text, "\n")
-			}
-			return view.OpenMsg{View: view.NewPager(label, lines)}
-		case "none":
-			return view.ReloadMsg{}
-		default:
-			msg := "Done: " + label
-			if text != "" {
-				msg = lastLine(text)
-			}
-			return tea.BatchMsg{view.Status(msg), view.Msg(view.ReloadMsg{})}
+		if output == "pager" && text != "" {
+			return tea.BatchMsg{view.Msg(view.OpenMsg{View: view.NewPager(label, strings.Split(text, "\n"))}),
+				view.Errorf(fmt.Errorf("%s: %s", label, msg))}
 		}
+		return tea.BatchMsg{view.Errorf(fmt.Errorf("%s: %s", label, msg)), view.Msg(view.ReloadMsg{})}
+	}
+	switch output {
+	case "pager":
+		var lines []string
+		if text != "" {
+			lines = strings.Split(text, "\n")
+		}
+		return view.OpenMsg{View: view.NewPager(label, lines)}
+	case "none":
+		return view.ReloadMsg{}
+	default:
+		msg := "Done: " + label
+		if text != "" {
+			msg = lastLine(text)
+		}
+		return tea.BatchMsg{view.Status(msg), view.Msg(view.ReloadMsg{})}
 	}
 }
 
