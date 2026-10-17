@@ -76,13 +76,18 @@ type Closer interface {
 
 // Base holds the cursor and loading state shared by all views.
 type Base struct {
-	ID      int
-	Cursor  int
-	Offset  int
-	Col     int
-	Height  int
-	Loading bool
-	Err     error
+	ID     int
+	Cursor int
+	Offset int
+	Col    int
+	Height int
+	// PendingLine is a 1-based line requested at start-up (the +<number>
+	// option). Render applies it once the view has rows and clears it,
+	// because the first render of an empty view would otherwise clamp the
+	// cursor back to row 1.
+	PendingLine int
+	Loading     bool
+	Err         error
 
 	search    *regexp.Regexp
 	searchRaw string
@@ -289,11 +294,25 @@ func Find(env *Env, v View, dir int) error {
 	return fmt.Errorf("no match for %q", b.searchRaw)
 }
 
+// applyPendingLine moves the cursor to the initially requested line once
+// the view has rows. Doing this on the first render with data keeps the
+// +<number> selection working for every view regardless of how the content
+// is loaded.
+func (b *Base) applyPendingLine(n int) {
+	if b.PendingLine <= 0 || n <= 0 {
+		return
+	}
+	b.Cursor = b.PendingLine - 1
+	b.Offset = max(b.Cursor-3, 0)
+	b.PendingLine = 0
+}
+
 // Render draws rows of the view in a box of width×height.
 func Render(env *Env, v View, width, height int) string {
 	b := v.B()
 	b.Height = height
 	n := v.Len()
+	b.applyPendingLine(n)
 	b.Clamp(n)
 	th := env.Theme
 	numWidth := len(fmt.Sprint(n))
