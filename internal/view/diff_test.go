@@ -69,12 +69,13 @@ func plainRow(env *Env, v View, i int) string {
 	return sb.String()
 }
 
-// loadDiff loads a commit diff synchronously.
+// loadDiff loads a commit diff synchronously by draining the streamed
+// wait chain.
 func loadDiff(t *testing.T, env *Env, commit string) *DiffView {
 	t.Helper()
 	v := NewDiff(commit, nil)
-	if cmd := v.Load(env); cmd != nil {
-		v.HandleMsg(env, cmd())
+	for i, cmd := 0, v.Load(env); i < 100000 && cmd != nil; i++ {
+		cmd = v.HandleMsg(env, cmd())
 	}
 	if v.Err != nil {
 		t.Fatalf("load: %v", v.Err)
@@ -314,5 +315,41 @@ func TestLogViewStreamsFromGit(t *testing.T) {
 	}
 	if c != env.Head.Hash {
 		t.Errorf("commitAt = %q, want %q", c, env.Head.Hash)
+	}
+}
+
+// TestDiffViewStreamsAndRestylesOnce checks that the streamed diff ingest
+// renders progressive batches and that the commit-header restyle runs once
+// on the done message, not per chunk.
+func TestDiffViewStreamsAndRestylesOnce(t *testing.T) {
+	env := headerEnv(t)
+	v := NewDiff(env.Head.Hash, nil)
+	args := v.args(env)
+	cmd := v.streamText(env, 3, classifyDiff, args...)
+
+	// First batch: lines visible while loading, header not restyled yet.
+	first := cmd()
+	if cmd = v.HandleMsg(env, first); cmd == nil {
+		t.Fatal("a live chunk must return the wait command")
+	}
+	if v.Len() == 0 {
+		t.Fatal("nothing streamed from the first chunk")
+	}
+	if got := plainRow(env, v, 0); !strings.HasPrefix(got, "commit ") {
+		t.Errorf("header not yet as streamed: %q", got)
+	}
+
+	// Drain: the view finishes and the header is restyled exactly once.
+	for i := 0; i < 1000 && cmd != nil; i++ {
+		cmd = v.HandleMsg(env, cmd())
+	}
+	if v.Err != nil {
+		t.Fatalf("load: %v", v.Err)
+	}
+	if v.Loading {
+		t.Error("still loading after the done chunk")
+	}
+	if got := plainRow(env, v, 0); !strings.HasPrefix(got, labelRow("commit")) {
+		t.Errorf("header not restyled: %q", got)
 	}
 }
