@@ -18,6 +18,11 @@ type textView struct {
 	roles []theme.Role
 	rows  [][]Seg // cached segments; nil entries are built on demand
 	tab   int
+	hl    wordHLState // pending -/+ run pairing for the word highlight
+	// streamGen is the load generation of the content currently loaded
+	// by streamed ingestion; 0 = none. The first chunk of a load
+	// replaces whatever content the view still held.
+	streamGen int
 }
 
 func (t *textView) Len() int { return len(t.lines) }
@@ -29,78 +34,126 @@ func (t *textView) Row(env *Env, i int) []Seg {
 	return t.rows[i]
 }
 
+// finishWordHL applies the -/+ run pair the content ends on, which the
+// one-shot scan paired when it went past the end of the buffer. Rows may
+// already be cached from rendering; pair simply replaces them.
+func (t *textView) finishWordHL() {
+	if t.hl.mid >= 0 {
+		t.hl.pair(t, len(t.lines))
+	}
+}
+
+// setLines replaces the content with lines (one-shot ingestion).
 func (t *textView) setLines(env *Env, lines []string, classify func(string) theme.Role) {
+	t.startStream(env)
+	t.append(env, lines, classify)
+	t.finishWordHL()
+}
+
+// startStream (re)initializes the buffers for a new content generation.
+func (t *textView) startStream(env *Env) {
 	t.tab = env.Cfg.UI.TabSize
-	t.lines = make([]string, len(lines))
-	t.roles = make([]theme.Role, len(lines))
-	t.rows = make([][]Seg, len(lines))
-	for i, l := range lines {
-		t.lines[i] = ExpandTabs(l, t.tab)
-		t.roles[i] = classify(l)
-	}
-	if env.Cfg.Diff.Highlight == "word" {
-		t.wordHighlight()
-	}
-	if env.Cfg.Diff.Highlight == "off" {
-		for i := range t.roles {
-			if t.roles[i] == theme.DiffAdd || t.roles[i] == theme.DiffDel {
-				t.roles[i] = theme.Default
-			}
+	t.hl.reset()
+	t.lines = nil
+	t.roles = nil
+	t.rows = nil
+}
+
+// append ingests raw lines into the (initialized) buffers: tabs are expanded,
+// each line is classified and the whole-buffer passes of the old setLines
+// (stat coloring, word highlight) run per line as they arrive. A trailing
+// -/+ run pair the buffer ends on is left pending for finishWordHL.
+func (t *textView) append(env *Env, lines []string, classify func(string) theme.Role) {
+	mode := env.Cfg.Diff.Highlight
+	for _, l := range lines {
+		t.lines = append(t.lines, ExpandTabs(l, t.tab))
+		r := classify(l)
+		if mode == "off" && (r == theme.DiffAdd || r == theme.DiffDel) {
+			r = theme.Default
 		}
+		t.roles = append(t.roles, r)
+		t.rows = append(t.rows, nil)
+		i := len(t.roles) - 1
+		if mode == "word" {
+			t.hl.step(t, i)
+		}
+		t.styleStatLine(i)
 	}
-	t.styleStat()
 }
 
 var statLine = regexp.MustCompile(`^ (.*\S)\s+\|\s+(\d+ ?)?([+-]*)$`)
 
-// styleStat colors +/- in diffstat lines.
-func (t *textView) styleStat() {
-	for i, l := range t.lines {
-		if t.roles[i] != theme.Default {
-			continue
+// styleStatLine colors +/- in one diffstat line, caching its segments so
+// Row() does not have to rebuild them.
+func (t *textView) styleStatLine(i int) {
+	if t.roles[i] != theme.Default {
+		return
+	}
+	l := t.lines[i]
+	m := statLine.FindStringSubmatchIndex(l)
+	if m == nil || m[6] < 0 {
+		return
+	}
+	bars := l[m[6]:m[7]]
+	segs := []Seg{{theme.Default, l[:m[6]]}}
+	plus := strings.Count(bars, "+")
+	if plus > 0 {
+		segs = append(segs, Seg{theme.StatAdd, strings.Repeat("+", plus)})
+	}
+	if minus := len(bars) - plus; minus > 0 {
+		segs = append(segs, Seg{theme.StatDel, strings.Repeat("-", minus)})
+	}
+	t.rows[i] = segs
+}
+
+// wordHLState pairs the DiffDel run starting at delStart with a following
+// equal-length DiffAdd run starting at mid and highlights the changed parts
+// of each -/+ line. It advances one line at a time, so the pairing carries
+// across batch boundaries during streamed ingestion.
+type wordHLState struct {
+	delStart int
+	mid      int // -1 = no run pending
+}
+
+func (s *wordHLState) reset() { s.delStart, s.mid = -1, -1 }
+
+// step processes line i (already ingested into t).
+func (s *wordHLState) step(t *textView, i int) {
+	switch t.roles[i] {
+	case theme.DiffDel:
+		if s.mid >= 0 {
+			// The add run ended as this line appeared.
+			s.pair(t, i)
+			s.reset()
 		}
-		m := statLine.FindStringSubmatchIndex(l)
-		if m == nil || m[6] < 0 {
-			continue
+		if s.delStart < 0 {
+			s.delStart = i
 		}
-		bars := l[m[6]:m[7]]
-		segs := []Seg{{theme.Default, l[:m[6]]}}
-		plus := strings.Count(bars, "+")
-		if plus > 0 {
-			segs = append(segs, Seg{theme.StatAdd, strings.Repeat("+", plus)})
+	case theme.DiffAdd:
+		if s.delStart >= 0 && s.mid < 0 {
+			s.mid = i
 		}
-		if minus := len(bars) - plus; minus > 0 {
-			segs = append(segs, Seg{theme.StatDel, strings.Repeat("-", minus)})
+	default:
+		// A non -/+ line ends the pending runs (an add-only tail,
+		// without a matching del run, stays unhighlighted).
+		if s.mid >= 0 {
+			s.pair(t, i)
 		}
-		t.rows[i] = segs
+		s.reset()
 	}
 }
 
-// wordHighlight highlights the changed part of paired -/+ lines.
-func (t *textView) wordHighlight() {
-	n := len(t.lines)
-	for i := 0; i < n; {
-		if t.roles[i] != theme.DiffDel {
-			i++
-			continue
-		}
-		start := i
-		for i < n && t.roles[i] == theme.DiffDel {
-			i++
-		}
-		mid := i
-		for i < n && t.roles[i] == theme.DiffAdd {
-			i++
-		}
-		if i-mid != mid-start {
-			continue
-		}
-		for k := 0; k < mid-start; k++ {
-			a, b := start+k, mid+k
-			pre, suf := commonAffixes(t.lines[a][1:], t.lines[b][1:])
-			t.rows[a] = splitHL(t.lines[a], pre+1, len(t.lines[a])-suf, theme.DiffDel, theme.DiffDelHL)
-			t.rows[b] = splitHL(t.lines[b], pre+1, len(t.lines[b])-suf, theme.DiffAdd, theme.DiffAddHL)
-		}
+// pair highlights the equal-length run pair [delStart, mid) + [mid, end).
+func (s *wordHLState) pair(t *textView, end int) {
+	n := s.mid - s.delStart
+	if end-s.mid != n {
+		return
+	}
+	for k := 0; k < n; k++ {
+		a, b := s.delStart+k, s.mid+k
+		pre, suf := commonAffixes(t.lines[a][1:], t.lines[b][1:])
+		t.rows[a] = splitHL(t.lines[a], pre+1, len(t.lines[a])-suf, theme.DiffDel, theme.DiffDelHL)
+		t.rows[b] = splitHL(t.lines[b], pre+1, len(t.lines[b])-suf, theme.DiffAdd, theme.DiffAddHL)
 	}
 }
 
@@ -179,6 +232,103 @@ func splitText(s string) []string {
 		return nil
 	}
 	return strings.Split(s, "\n")
+}
+
+// textChunkMsg is one batch of lines streamed from a git command and the
+// command that receives the next batch.
+type textChunkMsg struct {
+	id    int
+	gen   int // load generation captured at load start
+	lines []string
+	next  tea.Cmd
+	done  bool
+	err   error
+}
+
+func (m textChunkMsg) ViewID() int { return m.id }
+
+// streamBatch is the number of lines appended per message while a git
+// command's output is streamed into the view.
+const streamBatch = 2000
+
+// streamText streams the output of a read-only git command into the text
+// view: every fixed number of lines the view renders what it has received
+// so far, instead of waiting for (and buffering) the whole output.
+func (t *textView) streamText(env *Env, batch int, classify func(string) theme.Role, args ...string) tea.Cmd {
+	ctx, gen := t.startLoad()
+	r := env.Git()
+	id := t.ID
+	ch := make(chan textChunkMsg, 4)
+	send := func(chunk []string) error {
+		select {
+		case ch <- textChunkMsg{id: id, gen: gen, lines: chunk}:
+			return nil
+		case <-ctx.Done():
+			return context.Canceled
+		}
+	}
+	go func() {
+		defer close(ch)
+		var lines []string
+		err := r.StreamLines(ctx, func(line string) error {
+			lines = append(lines, line)
+			if len(lines) < batch {
+				return nil
+			}
+			chunk := lines
+			lines = nil
+			return send(chunk)
+		}, args...)
+		if err == nil && len(lines) > 0 {
+			err = send(lines)
+		}
+		select {
+		case ch <- textChunkMsg{id: id, gen: gen, done: true, err: err}:
+		case <-ctx.Done():
+		}
+	}()
+	var wait tea.Cmd
+	wait = func() tea.Msg {
+		m, ok := <-ch
+		if !ok {
+			return textChunkMsg{id: id, gen: gen, done: true, err: context.Canceled}
+		}
+		if !m.done {
+			m.next = wait
+		}
+		return m
+	}
+	return wait
+}
+
+// handleChunk applies one streamed batch, starting a replacement stream
+// with the load's first chunk and finishing the load on the done message.
+func (t *textView) handleChunk(env *Env, msg tea.Msg, classify func(string) theme.Role) (tea.Cmd, bool) {
+	m, ok := msg.(textChunkMsg)
+	if !ok {
+		return nil, false
+	}
+	if t.stale(m.gen) {
+		// A superseded load's result: keep the current content and
+		// drop the batch along with the rest of its wait chain.
+		return nil, true
+	}
+	if t.streamGen != m.gen {
+		// First chunk of the load: replace the old content.
+		t.startStream(env)
+		t.streamGen = m.gen
+	}
+	if m.err != nil {
+		t.finish(m.err)
+		return nil, true
+	}
+	t.append(env, m.lines, classify)
+	if m.done {
+		t.finishWordHL()
+		t.finish(nil)
+		return nil, true
+	}
+	return m.next, true
 }
 
 func (t *textView) handleText(env *Env, msg tea.Msg, classify func(string) theme.Role) bool {

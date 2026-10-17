@@ -297,9 +297,11 @@ func Find(env *Env, v View, dir int) error {
 // applyPendingLine moves the cursor to the initially requested line once
 // the view has rows. Doing this on the first render with data keeps the
 // +<number> selection working for every view regardless of how the content
-// is loaded.
+// is loaded. While a load is still running (streamed batches may grow the
+// row count again) the request must wait: an early apply would clamp the
+// cursor back to the loaded rows instead of the requested line.
 func (b *Base) applyPendingLine(n int) {
-	if b.PendingLine <= 0 || n <= 0 {
+	if b.Loading || b.PendingLine <= 0 || n <= 0 {
 		return
 	}
 	b.Cursor = b.PendingLine - 1

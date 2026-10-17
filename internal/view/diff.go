@@ -227,7 +227,8 @@ func (v *DiffView) Selection(env *Env) Selection {
 	return sel
 }
 
-// LogView shows full commit messages with diffstat.
+// LogView shows full commit messages with diffstat, streamed in as the git
+// log output arrives so huge histories render progressively.
 type LogView struct {
 	textView
 	Revs  []string
@@ -253,11 +254,13 @@ func (v *LogView) Load(env *Env) tea.Cmd {
 	if len(v.Paths) > 0 {
 		args = append(append(args, "--"), v.Paths...)
 	}
-	return v.gitText(env, args, classifyDiff)
+	return v.streamText(env, streamBatch, classifyDiff, args...)
 }
 
 func (v *LogView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
-	v.handleText(env, msg, classifyDiff)
+	if cmd, ok := v.handleChunk(env, msg, classifyDiff); ok {
+		return cmd
+	}
 	return nil
 }
 

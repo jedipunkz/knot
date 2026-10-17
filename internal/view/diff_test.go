@@ -2,11 +2,14 @@ package view
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/jedipunkz/knot/internal/config"
 	"github.com/jedipunkz/knot/internal/git"
@@ -177,5 +180,139 @@ func TestDiffCommitHeaderMerge(t *testing.T) {
 	}
 	if segs := v.Row(env, 2); len(segs) < 2 || segs[1].Role != theme.CommitID {
 		t.Errorf("merge row = %+v", v.Row(env, 2))
+	}
+}
+
+func TestLogViewStreamedIngest(t *testing.T) {
+	env := testEnv(t)
+	v := NewLog(nil, nil)
+	_, gen := v.startLoad()
+
+	// A synthetic wait chain: chunks hand off to wait, like the real
+	// load's continuation commands do.
+	wait := func() tea.Msg { return textChunkMsg{gen: gen, done: true} }
+
+	chunk1 := []string{
+		"commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"Author:     Alice <alice@example.com>",
+		"    first commit",
+		"",
+		" file.go | 3 +++",
+		" 3 files changed, 5 insertions(+) (bogus)",
+	}
+	// Deliver the first chunk and render: the lines are visible already.
+	if cmd := v.HandleMsg(env, textChunkMsg{gen: gen, lines: chunk1, next: wait}); cmd == nil {
+		t.Fatal("a live chunk must return the wait command")
+	}
+	if n := v.Len(); n != len(chunk1) {
+		t.Fatalf("after chunk 1: len = %d, want %d", n, len(chunk1))
+	}
+	out := Render(env, v, 60, 8)
+	if !strings.Contains(out, "first commit") {
+		t.Errorf("chunk 1 not rendered: %q", out)
+	}
+	if s := v.Row(env, 0)[0]; s.Role != theme.CommitID {
+		t.Errorf("commit line role = %v, want commit-id", s.Role)
+	}
+	// The diffstat line keeps its whole-buffer coloring.
+	stat := v.Row(env, 4)
+	if len(stat) < 2 || stat[1].Role != theme.StatAdd {
+		t.Errorf("stat segs = %+v", stat)
+	}
+
+	// A second chunk appends without disturbing the first lines.
+	chunk2 := []string{
+		"commit bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"Author:     Bob <bob@example.com>",
+		"    second commit",
+		"+added line\\nnot really",
+	}
+	if cmd := v.HandleMsg(env, textChunkMsg{gen: gen, lines: chunk2, next: wait}); cmd == nil {
+		t.Fatal("a live chunk must return the wait command")
+	}
+	if n := v.Len(); n != len(chunk1)+len(chunk2) {
+		t.Fatalf("after chunk 2: len = %d", n)
+	}
+	if got := v.lines[len(chunk1)]; got != "commit bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" {
+		t.Errorf("chunk 2 line = %q", got)
+	}
+
+	// Chunks from a superseded load are dropped.
+	_, gen2 := v.startLoad()
+	if cmd := v.HandleMsg(env, textChunkMsg{gen: gen, lines: []string{"stale"}, done: true}); cmd != nil {
+		t.Fatal("stale chunk returned a command")
+	}
+	if n := v.Len(); n != len(chunk1)+len(chunk2) {
+		t.Fatalf("stale chunk applied: len = %d", n)
+	}
+
+	// The current load finishes: the loading flag clears.
+	if cmd := v.HandleMsg(env, textChunkMsg{gen: gen2, lines: []string{"commit cccccccccccccccccccccccccccccccccccccccc"}, done: true}); cmd != nil {
+		t.Fatal("done chunk returned a command")
+	}
+	if v.Loading {
+		t.Error("still loading after the done chunk")
+	}
+	if n := v.Len(); n != 1 {
+		t.Fatalf("new generation did not replace old content: len = %d", n)
+	}
+
+	// An error on the done chunk keeps what streamed and is reported.
+	_, gen3 := v.startLoad()
+	v.HandleMsg(env, textChunkMsg{gen: gen3, lines: chunk1})
+	v.HandleMsg(env, textChunkMsg{gen: gen3, done: true, err: errors.New("git failed")})
+	if v.Err == nil {
+		t.Error("the load error was not reported")
+	}
+	if v.Loading {
+		t.Error("still loading after the failed done chunk")
+	}
+	if n := v.Len(); n != len(chunk1) {
+		t.Errorf("partial content lost: len = %d, want %d", n, len(chunk1))
+	}
+
+	// An error with nothing streamed replaces the old content.
+	v2 := NewLog(nil, nil)
+	_, gen4 := v2.startLoad()
+	v2.handleChunk(env, textChunkMsg{gen: gen4, lines: chunk1}, classifyDiff)
+	_, gen5 := v2.startLoad()
+	v2.handleChunk(env, textChunkMsg{gen: gen5, done: true, err: errors.New("boom")}, classifyDiff)
+	if v2.Len() != 0 {
+		t.Errorf("content not replaced on an early error: len = %d", v2.Len())
+	}
+	if v2.Err == nil || v2.Err.Error() != "boom" {
+		t.Errorf("err = %v, want boom", v2.Err)
+	}
+}
+
+func TestLogViewStreamsFromGit(t *testing.T) {
+	env := headerEnv(t)
+	v := NewLog(nil, nil)
+	args := []string{"log", "--no-color", "--stat", "--decorate=short", "--format=medium"}
+	cmd := v.streamText(env, 3, classifyDiff, args...)
+	for i := 0; cmd != nil && i < 1000; i++ {
+		cmd = v.HandleMsg(env, cmd())
+	}
+	if v.Err != nil {
+		t.Fatalf("load error: %v", v.Err)
+	}
+	want := gitCmd(t, env.WorktreeDir(), "log", "--no-color", "--stat", "--decorate=short", "--format=medium")
+	wantLines := strings.Split(strings.TrimRight(want, "\n"), "\n")
+	if n := v.Len(); n != len(wantLines) {
+		t.Fatalf("streamed %d lines, want %d", n, len(wantLines))
+	}
+	for i, w := range wantLines {
+		if got := v.lines[i]; got != w {
+			t.Fatalf("line %d = %q, want %q", i, got, w)
+		}
+	}
+	// Enter on the first commit line walks up to "commit <sha>".
+	v.SetCursor(0, v.Len())
+	c := v.commitAt(v.Cursor)
+	if c == "" {
+		t.Fatal("commitAt found no hash")
+	}
+	if c != env.Head.Hash {
+		t.Errorf("commitAt = %q, want %q", c, env.Head.Hash)
 	}
 }

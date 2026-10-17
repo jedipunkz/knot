@@ -167,15 +167,23 @@ func (v *MainView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
 			batch = append(batch, mainRow{commit: c, graph: v.builder.Add(c.Hash, c.Parents)})
 		}
 		v.all = append(v.all, batch...)
+		var newRows []mainRow
 		if v.query != "" {
 			// Each batch is filtered on arrival and appended.
-			v.rows = append(v.rows, v.filterRows(env, batch)...)
+			newRows = v.filterRows(env, batch)
+			v.rows = append(v.rows, newRows...)
 		} else {
 			v.rows = v.all
+			newRows = batch
 		}
 		if v.SelectHead {
-			for i, r := range v.rows {
-				if r.special == "" && r.commit.Hash == env.Head.Hash {
+			// Only the newly arrived rows can carry HEAD: the
+			// rows loaded before this batch were already scanned
+			// when they arrived, so one pass over all rows shared
+			// by every batch becomes one pass in total.
+			from := len(v.rows) - len(newRows)
+			for i := from; i < len(v.rows); i++ {
+				if r := v.rows[i]; r.special == "" && r.commit.Hash == env.Head.Hash {
 					v.SetCursor(i, len(v.rows))
 					v.SelectHead = false
 					v.moved = true
@@ -393,6 +401,19 @@ func (v *MainView) SetFilter(env *Env, q string) {
 		}
 	}
 	v.Clamp(len(v.rows))
+	if v.SelectHead && q == "" {
+		// The batch scan only covers rows that arrived after the
+		// pending selection; a row hidden by the filter needs the
+		// rebuilt list checked once before those batches arrive.
+		for i, r := range v.rows {
+			if r.special == "" && r.commit.Hash == env.Head.Hash {
+				v.SetCursor(i, len(v.rows))
+				v.SelectHead = false
+				v.moved = true
+				break
+			}
+		}
+	}
 }
 
 // FilterStatus implements Filterable.
