@@ -54,6 +54,21 @@ type Filterable interface {
 	FilterStatus() (query string, matches, loaded int, loading bool)
 }
 
+// FilterStarter is implemented by filterable views that want the filter
+// bar focused as soon as the view is opened (currently the worktree
+// view). While such a view is focused, Ctrl-P / Ctrl-N move between the
+// bar and the list.
+type FilterStarter interface {
+	FilterOnOpen() bool
+}
+
+// InfoLine is implemented by views that contribute an info row about the
+// selected row to the key bar area (e.g. the selected worktree's path,
+// branch and flags). Info returns nil when nothing is selected.
+type InfoLine interface {
+	Info(env *Env) []Seg
+}
+
 // Closer is implemented by views that need to act when closed.
 type Closer interface {
 	Closed(env *Env) tea.Cmd
