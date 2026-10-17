@@ -850,7 +850,11 @@ func (m *Model) View() tea.View {
 func (m *Model) render() (string, *tea.Cursor) {
 	th := m.env.Theme
 	w, h := m.width, m.height
-	avail := max(h-1, 2)
+	keybarH := 0
+	if m.env.Cfg.UI.KeyBar && h >= 5 && m.prompt == nil && m.filterBar == nil && m.confirm == nil {
+		keybarH = 1
+	}
+	avail := max(h-1-keybarH, 2)
 	m.panels = m.panels[:0]
 	var body string
 	var barCur *tea.Cursor
@@ -911,7 +915,48 @@ func (m *Model) render() (string, *tea.Cursor) {
 	if barCur != nil {
 		cursor = barCur
 	}
+	if keybarH == 1 {
+		body += "\n" + m.keybarRow(w)
+	}
 	return body + "\n" + line, cursor
+}
+
+// keybarRow renders the curated key hints above the status bar. The key
+// of each entry is resolved against the live keymap (unbound actions are
+// skipped); the row is cut at the width of the screen.
+func (m *Model) keybarRow(w int) string {
+	th := m.env.Theme
+	name := m.focused().Name()
+	var out []string
+	total := 0
+	for _, e := range keymap.Bar(name) {
+		keys := m.env.Keys.KeysOf(name, e.Action)
+		if len(keys) == 0 {
+			continue
+		}
+		key := keybarKey(keys[0])
+		width := ansi.StringWidth(key) + 1 + ansi.StringWidth(e.Text) + 2
+		if total+width > w {
+			break
+		}
+		out = append(out, th.Render(theme.Prompt, key)+" "+th.Render(theme.LineNumber, e.Text))
+		total += width
+	}
+	return strings.Join(out, th.Render(theme.LineNumber, "  "))
+}
+
+// keybarKey formats a key for the key bar.
+func keybarKey(k string) string {
+	switch k {
+	case "space":
+		return "Space"
+	case "enter":
+		return "Enter"
+	}
+	if len(k) > 1 {
+		return "<" + k + ">"
+	}
+	return k
 }
 
 // renderPanel draws a view with its filter bar (filterable views show it

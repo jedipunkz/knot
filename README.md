@@ -40,7 +40,9 @@ Other options such as `--all` are passed to git.
 
 ## Views and keys
 
-Press `h` in knot for the full list of the active key bindings.
+Press `h` in knot for the full list of the active key bindings. A key bar
+with the curated keys of the focused view sits above the status bar
+(`keybar = false` under `[ui]` hides it).
 
 | Key | View | Key | View |
 |---|---|---|---|

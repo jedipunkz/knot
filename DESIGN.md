@@ -372,6 +372,7 @@ show-line-numbers = false
 mouse             = true
 tab-size          = 8
 title-overflow    = 50
+keybar            = true         # curated key hints above the status bar
 
 [main]
 columns          = ["date", "author", "commit-id", "graph", "refs", "subject"]
@@ -499,5 +500,6 @@ Open:
 | `!` in refs = tig's `git branch -D` | `git branch -d` | Do not delete unmerged branches |
 | `!` in stage reverts the chunk (tig) | Reverts the whole file | Simpler and confirmed by a dialog |
 | Bubbles widgets | Own list / prompt / confirm | Small and fully controlled |
+| Key bar | Not in the draft | Curated key hints per view above the status bar; keys are resolved from the live keymap so rebinding is reflected; `[ui] keybar = false` hides it |
 | Diff header as raw `git show --format=fuller` text | Rebuilt as segmented theme-colored rows: commit, Refs (main-view ref decorations), Merge, Author, AuthorDate, Commit, CommitDate; labels in the `author-dim` / `date-dim` / `commit-id-dim` / `ref-dim` dark variants of their value's color, values in `commit-id` / author / `ref-*` / `date` roles | Consistent theming across views; issue #2 follow-up added the Refs row |
 | Fuzzy filter bar | Not in the draft; designed and implemented (issue #2) | fzf-style narrowing of the main view |
