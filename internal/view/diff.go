@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/jedipunkz/knot/internal/keymap"
+	"github.com/jedipunkz/knot/internal/theme"
 )
 
 // DiffView shows a commit (message, diffstat, patch) or worktree changes.
@@ -66,7 +67,7 @@ func (v *DiffView) args(env *Env) []string {
 			args = append(args, "--cached")
 		}
 	default:
-		args = []string{"show", "--no-color", "--no-ext-diff", "--patch-with-stat", "--format=fuller", "--decorate=short", "-M", "--root", ctxArg, v.Commit}
+		args = []string{"show", "--no-color", "--no-ext-diff", "--patch-with-stat", "--format=fuller", "--no-decorate", "-M", "--root", ctxArg, v.Commit}
 	}
 	if env.Opts.IgnoreSpace {
 		args = append(args, "-w")
@@ -84,7 +85,99 @@ func (v *DiffView) Load(env *Env) tea.Cmd {
 
 func (v *DiffView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
 	v.handleText(env, msg, classifyDiff)
+	if v.Commit != "" {
+		v.restyleCommitHeader(env)
+	}
 	return nil
+}
+
+// headerFields are the labeled fields of git show --format=fuller output,
+// the theme role of their value and the dim variant of that value used as
+// the label color.
+type headerField struct {
+	value theme.Role
+	label theme.Role
+}
+
+var headerFields = map[string]headerField{
+	"Merge":      {theme.CommitID, theme.CommitIDDim},
+	"Author":     {theme.Author, theme.AuthorDim},
+	"AuthorDate": {theme.Date, theme.DateDim},
+	"Commit":     {theme.Author, theme.AuthorDim},
+	"CommitDate": {theme.Date, theme.DateDim},
+}
+
+// isCommitHeaderLine reports whether l belongs to the git show
+// --format=fuller header block.
+func isCommitHeaderLine(l string) bool {
+	if strings.HasPrefix(l, "commit ") {
+		return true
+	}
+	field, _, ok := strings.Cut(l, ":")
+	if !ok {
+		return false
+	}
+	_, ok = headerFields[field]
+	return ok
+}
+
+// headerLabelWidth aligns the header field labels; "CommitDate:" is the
+// longest one.
+const headerLabelWidth = 12
+
+// restyleCommitHeader rebuilds the git show header block of a commit diff
+// as segmented theme-colored rows in the order commit, Refs, Merge,
+// Author, AuthorDate, Commit, CommitDate. Refs are drawn like the main
+// view's ref decorations; everything below the header (message, diffstat,
+// patch) is untouched.
+func (v *DiffView) restyleCommitHeader(env *Env) {
+	t := &v.textView
+	if len(t.lines) == 0 || !strings.HasPrefix(t.lines[0], "commit ") {
+		return
+	}
+	end := 1
+	for end < len(t.lines) && isCommitHeaderLine(t.lines[end]) {
+		end++
+	}
+	if end >= len(t.lines) || t.lines[end] != "" {
+		return // not the expected header block
+	}
+	fields := strings.SplitN(t.lines[0], " ", 2)
+	if len(fields) != 2 {
+		return
+	}
+	sha := fields[1]
+
+	var lines []string
+	var roles []theme.Role
+	var rows [][]Seg
+	add := func(field string, labelRole theme.Role, value string, valueSegs []Seg) {
+		lines = append(lines, Fit(field+":", headerLabelWidth)+" "+value)
+		roles = append(roles, theme.Default)
+		rows = append(rows, append([]Seg{{labelRole, Fit(field+":", headerLabelWidth)}}, valueSegs...))
+	}
+	add("commit", theme.CommitIDDim, sha, []Seg{{theme.CommitID, sha}})
+	refs := refSegs(env, sha, nil)
+	var refText strings.Builder
+	for _, s := range refs {
+		refText.WriteString(s.Text)
+	}
+	add("Refs", theme.RefDim, refText.String(), refs)
+	for _, l := range t.lines[1:end] {
+		field, value, ok := strings.Cut(l, ":")
+		if !ok {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		hf := headerFields[field]
+		if hf.value == "" {
+			hf = headerField{theme.DiffMeta, theme.LineNumber}
+		}
+		add(field, hf.label, value, []Seg{{hf.value, value}})
+	}
+	t.lines = append(lines, t.lines[end:]...)
+	t.roles = append(roles, t.roles[end:]...)
+	t.rows = append(rows, t.rows[end:]...)
 }
 
 // Enter on a diffstat line jumps to the file's diff; otherwise it scrolls.

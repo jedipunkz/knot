@@ -294,7 +294,9 @@ The switch only affects knot's internal context. knot cannot change the parent s
 Themes map **semantic color roles** to styles. Views never use raw colors.
 
 Roles:
-`default`, `cursor`, `title-focus`, `title-blur`, `status-bar`, `line-number`, `date`, `author`, `commit-id`, `graph-1`..`graph-6`, `ref-head`, `ref-branch`, `ref-remote`, `ref-tag`, `ref-stash`, `ref-worktree`, `diff-add`, `diff-del`, `diff-add-highlight`, `diff-del-highlight`, `diff-hunk`, `diff-header`, `diff-meta`, `stat-add`, `stat-del`, `status-staged`, `status-unstaged`, `status-untracked`, `section`, `search-match`, `prompt`, `error`, `warning`, `title-overflow`, `directory`, `marker`.
+`default`, `cursor`, `title-focus`, `title-blur`, `status-bar`, `line-number`, `date`, `author`, `commit-id`, `graph-1`..`graph-6`, `ref-head`, `ref-branch`, `ref-remote`, `ref-tag`, `ref-stash`, `ref-worktree`, `diff-add`, `diff-del`, `diff-add-highlight`, `diff-del-highlight`, `diff-hunk`, `diff-header`, `diff-meta`, `stat-add`, `stat-del`, `status-staged`, `status-unstaged`, `status-untracked`, `section`, `search-match`, `prompt`, `error`, `warning`, `title-overflow`, `directory`, `marker`, `author-dim`, `date-dim`, `commit-id-dim`, `ref-dim`.
+
+The `*-dim` roles are the dark variants of a field's value color (value color + `dim` attribute by default); they are used for the field labels of the diff view header.
 
 A style is:
 
@@ -497,3 +499,5 @@ Open:
 | `!` in refs = tig's `git branch -D` | `git branch -d` | Do not delete unmerged branches |
 | `!` in stage reverts the chunk (tig) | Reverts the whole file | Simpler and confirmed by a dialog |
 | Bubbles widgets | Own list / prompt / confirm | Small and fully controlled |
+| Diff header as raw `git show --format=fuller` text | Rebuilt as segmented theme-colored rows: commit, Refs (main-view ref decorations), Merge, Author, AuthorDate, Commit, CommitDate; labels in the `author-dim` / `date-dim` / `commit-id-dim` / `ref-dim` dark variants of their value's color, values in `commit-id` / author / `ref-*` / `date` roles | Consistent theming across views; issue #2 follow-up added the Refs row |
+| Fuzzy filter bar | Not in the draft; designed and implemented (issue #2) | fzf-style narrowing of the main view |

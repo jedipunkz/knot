@@ -45,6 +45,13 @@ func fromPalette(p palette) map[Role]Spec {
 		Overflow:        {Fg: p.orange, Attrs: []string{"underline"}},
 		Directory:       {Fg: p.blue, Attrs: []string{"bold"}},
 		Marker:          {Fg: p.orange, Attrs: []string{"bold"}},
+
+		// Dim variants: the label color of each diff header field reads
+		// as the darker version of the value next to it.
+		AuthorDim:   {Fg: p.green, Attrs: []string{"dim"}},
+		DateDim:     {Fg: p.blue, Attrs: []string{"dim"}},
+		CommitIDDim: {Fg: p.magenta, Attrs: []string{"dim"}},
+		RefDim:      {Fg: p.cyan, Attrs: []string{"dim"}},
 	}
 	lanes := []string{p.blue, p.yellow, p.magenta, p.cyan, p.green, p.red}
 	for i, c := range lanes {
