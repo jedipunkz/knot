@@ -1,0 +1,227 @@
+package view
+
+import (
+	"strconv"
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/jedipunkz/knot/internal/keymap"
+)
+
+// DiffView shows a commit (message, diffstat, patch) or worktree changes.
+type DiffView struct {
+	textView
+	Commit string
+	Paths  []string // file filter (toggle with %)
+	// Worktree diffs: Cached selects index vs HEAD.
+	Worktree bool
+	Cached   bool
+	// Stash shows a stash entry instead of a commit.
+	Stash string
+	Label string
+}
+
+// NewDiff shows a commit.
+func NewDiff(commit string, paths []string) *DiffView {
+	return &DiffView{Commit: commit, Paths: paths}
+}
+
+// NewDiffWorktree shows unstaged (or staged) changes.
+func NewDiffWorktree(cached bool) *DiffView {
+	return &DiffView{Worktree: true, Cached: cached}
+}
+
+func (v *DiffView) Name() string { return "diff" }
+
+func (v *DiffView) Title(env *Env) string {
+	switch {
+	case v.Label != "":
+		return "[diff] " + v.Label
+	case v.Worktree && v.Cached:
+		return "[diff] Staged changes"
+	case v.Worktree:
+		return "[diff] Unstaged changes"
+	}
+	t := "[diff] " + Short(v.Commit, 10)
+	if len(v.Paths) > 0 && env.Opts.FileFilter {
+		t += " -- " + strings.Join(v.Paths, " ")
+	}
+	return t
+}
+
+func (v *DiffView) args(env *Env) []string {
+	ctxArg := "-U" + strconv.Itoa(env.Opts.DiffContext)
+	var args []string
+	switch {
+	case v.Stash != "":
+		args = []string{"stash", "show", "--no-color", "--no-ext-diff", "-p", "--stat", "-M", ctxArg}
+		if env.Opts.IgnoreSpace {
+			args = append(args, "-w")
+		}
+		return append(args, v.Stash)
+	case v.Worktree:
+		args = []string{"diff", "--no-color", "--no-ext-diff", "--patch-with-stat", "-M", ctxArg}
+		if v.Cached {
+			args = append(args, "--cached")
+		}
+	default:
+		args = []string{"show", "--no-color", "--no-ext-diff", "--patch-with-stat", "--format=fuller", "--decorate=short", "-M", "--root", ctxArg, v.Commit}
+	}
+	if env.Opts.IgnoreSpace {
+		args = append(args, "-w")
+	}
+	if len(v.Paths) > 0 && env.Opts.FileFilter {
+		args = append(args, "--")
+		args = append(args, v.Paths...)
+	}
+	return args
+}
+
+func (v *DiffView) Load(env *Env) tea.Cmd {
+	return v.gitText(env, v.args(env), classifyDiff)
+}
+
+func (v *DiffView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
+	v.handleText(env, msg, classifyDiff)
+	return nil
+}
+
+// Enter on a diffstat line jumps to the file's diff; otherwise it scrolls.
+func (v *DiffView) Enter(env *Env) tea.Cmd {
+	if v.Cursor < len(v.lines) {
+		if m := statLine.FindStringSubmatch(v.lines[v.Cursor]); m != nil {
+			name := strings.TrimSpace(m[1])
+			for i, l := range v.lines {
+				if strings.HasPrefix(l, "diff --git ") && (strings.HasSuffix(l, "/"+name) || strings.Contains(l, " b/"+name)) {
+					v.SetCursor(i, len(v.lines))
+					v.Offset = i
+					v.Clamp(len(v.lines))
+					return nil
+				}
+			}
+		}
+	}
+	return v.scrollEnter()
+}
+
+func (v *DiffView) Do(env *Env, a keymap.Action) (tea.Cmd, bool) {
+	switch a {
+	case keymap.DiffContextUp:
+		env.Opts.DiffContext++
+		return v.Load(env), true
+	case keymap.DiffContextDown:
+		if env.Opts.DiffContext > 0 {
+			env.Opts.DiffContext--
+		}
+		return v.Load(env), true
+	case keymap.Edit:
+		file, line := lineRef(v.lines, v.Cursor)
+		if file == "" {
+			return Status("No file under the cursor"), true
+		}
+		return EditorCmd(env, file, line), true
+	}
+	return nil, false
+}
+
+func (v *DiffView) Selection(env *Env) Selection {
+	file, line := lineRef(v.lines, v.Cursor)
+	sel := Selection{Commit: v.Commit, Rev: v.Commit, File: file, Line: line}
+	if v.Worktree {
+		sel.Rev = ""
+	}
+	return sel
+}
+
+// LogView shows full commit messages with diffstat.
+type LogView struct {
+	textView
+	Revs  []string
+	Paths []string
+}
+
+// NewLog creates a log view.
+func NewLog(revs, paths []string) *LogView { return &LogView{Revs: revs, Paths: paths} }
+
+func (v *LogView) Name() string { return "log" }
+
+func (v *LogView) Title(env *Env) string {
+	if len(v.Revs) > 0 {
+		return "[log] " + strings.Join(v.Revs, " ")
+	}
+	return "[log] HEAD"
+}
+
+func (v *LogView) Load(env *Env) tea.Cmd {
+	args := []string{"log", "--no-color", "--stat", "--decorate=short", "--format=medium"}
+	args = append(args, env.Cfg.Git.LogArgs...)
+	args = append(args, v.Revs...)
+	if len(v.Paths) > 0 {
+		args = append(append(args, "--"), v.Paths...)
+	}
+	return v.gitText(env, args, classifyDiff)
+}
+
+func (v *LogView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
+	v.handleText(env, msg, classifyDiff)
+	return nil
+}
+
+func (v *LogView) commitAt(i int) string {
+	for k := min(i, len(v.lines)-1); k >= 0; k-- {
+		if f := strings.Fields(v.lines[k]); len(f) >= 2 && f[0] == "commit" && len(f[1]) >= 40 {
+			return f[1]
+		}
+	}
+	return ""
+}
+
+func (v *LogView) Enter(env *Env) tea.Cmd {
+	if c := v.commitAt(v.Cursor); c != "" {
+		return Msg(OpenMsg{View: NewDiff(c, v.Paths), Split: true})
+	}
+	return nil
+}
+
+func (v *LogView) Do(env *Env, a keymap.Action) (tea.Cmd, bool) { return nil, false }
+
+func (v *LogView) Selection(env *Env) Selection {
+	c := v.commitAt(v.Cursor)
+	return Selection{Commit: c, Rev: c}
+}
+
+// PagerView shows stdin or the output of a command.
+type PagerView struct {
+	textView
+	Label   string
+	Content []string
+}
+
+// NewPager shows fixed text.
+func NewPager(label string, content []string) *PagerView {
+	return &PagerView{Label: label, Content: content}
+}
+
+func (v *PagerView) Name() string          { return "pager" }
+func (v *PagerView) Title(env *Env) string { return "[pager] " + v.Label }
+
+func (v *PagerView) Load(env *Env) tea.Cmd {
+	v.setLines(env, v.Content, classifyDiff)
+	return nil
+}
+
+func (v *PagerView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd { return nil }
+
+func (v *PagerView) Enter(env *Env) tea.Cmd {
+	// Like tig, Enter on a "commit <id>" line opens the commit.
+	if v.Cursor < len(v.lines) {
+		if f := strings.Fields(v.lines[v.Cursor]); len(f) >= 2 && f[0] == "commit" && len(f[1]) >= 7 {
+			return Msg(OpenMsg{View: NewDiff(f[1], nil), Split: true})
+		}
+	}
+	return v.scrollEnter()
+}
+
+func (v *PagerView) Do(env *Env, a keymap.Action) (tea.Cmd, bool) { return nil, false }
+func (v *PagerView) Selection(env *Env) Selection                 { return Selection{} }
