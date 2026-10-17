@@ -56,6 +56,37 @@ func TestStaleLoadedTextDropped(t *testing.T) {
 	}
 }
 
+func TestStaleStreamedChunkDropped(t *testing.T) {
+	env := testEnv(t)
+	var tv textView
+	_, gen := tv.startLoad()
+
+	// A chunk from the superseded load is dropped along with its wait
+	// chain, and the current content is kept.
+	tv.handleChunk(env, textChunkMsg{gen: gen - 1, lines: []string{"stale"}, next: func() tea.Msg { return textChunkMsg{} }}, classifyPlain)
+	if tv.Len() != 0 {
+		t.Fatalf("stale chunk applied: len = %d", tv.Len())
+	}
+
+	// So is the done message of the superseded load; the loading flag
+	// belongs to the newer load and stays until it finishes.
+	tv.handleChunk(env, textChunkMsg{gen: gen - 1, done: true}, classifyPlain)
+	if tv.Len() != 0 {
+		t.Fatalf("stale done message applied content: len = %d", tv.Len())
+	}
+
+	// The current generation still applies, chunk by chunk, until its
+	// own done message.
+	tv.handleChunk(env, textChunkMsg{gen: gen, lines: []string{"first", "second"}}, classifyPlain)
+	if tv.Len() != 2 {
+		t.Fatalf("fresh chunk not applied: len = %d", tv.Len())
+	}
+	tv.handleChunk(env, textChunkMsg{gen: gen, done: true}, classifyPlain)
+	if tv.Loading {
+		t.Fatal("still loading after the done chunk")
+	}
+}
+
 func TestStaleWorktreeResultsDropped(t *testing.T) {
 	env := testEnv(t)
 	env.Cfg.Worktree.ShowDirty = false

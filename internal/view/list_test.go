@@ -66,3 +66,32 @@ func TestPendingLineClampedToContent(t *testing.T) {
 		t.Fatalf("pending line = %d, want 0", p.B().PendingLine)
 	}
 }
+
+func TestPendingLineWaitsForStream(t *testing.T) {
+	env := testEnv(t)
+	p := NewPager("t", []string{"one", "two", "three", "four", "five"})
+	p.Load(env)
+	p.B().PendingLine = 4
+	p.B().Loading = true // a streamed load is still in progress
+
+	// A partial render with fewer rows than the requested line must
+	// not consume the request: the cursor would be clamped back as
+	// more rows streamed in.
+	Render(env, p, 40, 10)
+	if p.B().PendingLine != 4 {
+		t.Fatalf("pending line consumed early = %d", p.B().PendingLine)
+	}
+	if p.Cursor != 0 {
+		t.Fatalf("cursor = %d, want 0 while loading", p.Cursor)
+	}
+
+	// Once the load finishes, the line is selected.
+	p.B().finish(nil)
+	Render(env, p, 40, 10)
+	if p.Cursor != 3 {
+		t.Fatalf("cursor = %d, want 3 (line 4)", p.Cursor)
+	}
+	if p.B().PendingLine != 0 {
+		t.Fatalf("pending line = %d, want 0", p.B().PendingLine)
+	}
+}

@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/jedipunkz/knot/internal/git"
 	"github.com/jedipunkz/knot/internal/graph"
 	"github.com/jedipunkz/knot/internal/theme"
@@ -186,5 +188,105 @@ func TestMainViewSetFilterBatchIncremental(t *testing.T) {
 	feedCommits(env, v, later)
 	if n := v.Len(); n != 3 {
 		t.Fatalf("rows = %d, want 3 (batch filtered on arrival)", n)
+	}
+}
+
+// TestSelectHeadSingleBatchScan is a regression for the O(rows × batch)
+// head scan: the cursor must land on HEAD within the batch it belongs to
+// and only scan the rows that batch appended.
+func TestSelectHeadSingleBatchScan(t *testing.T) {
+	env := filterEnv(t)
+	env.Head.Hash = testCommits()[2].Hash
+	v := NewMain(nil, nil)
+	v.builder = graph.New(graph.Unicode)
+	_, gen := v.startLoad()
+	v.SelectHead = true
+
+	// Batch 1 has no HEAD; the load keeps running.
+	if cmd := v.HandleMsg(env, commitBatchMsg{gen: gen, commits: testCommits()[:2], next: func() tea.Msg { return commitBatchMsg{gen: gen} }}); cmd == nil {
+		t.Fatal("a live batch must return the wait command")
+	}
+	if !v.SelectHead || v.moved {
+		t.Fatalf("cursor moved to HEAD in a batch without it: cursor %d select %v", v.Cursor, v.SelectHead)
+	}
+	if v.Cursor != 0 {
+		t.Errorf("cursor = %d, want 0 (no HEAD yet)", v.Cursor)
+	}
+
+	// Batch 2 carries HEAD; the cursor lands on it.
+	v.HandleMsg(env, commitBatchMsg{gen: gen, commits: testCommits()[2:], done: true})
+	if v.SelectHead {
+		t.Fatal("the pending selection was not consumed")
+	}
+	if v.Cursor != 2 {
+		t.Errorf("cursor = %d, want 2 (third commit)", v.Cursor)
+	}
+
+	// Further results must not reset the cursor.
+	v.HandleMsg(env, commitBatchMsg{gen: gen, commits: testCommits()})
+	if v.Cursor != 2 {
+		t.Errorf("cursor after the last batch = %d, want 2", v.Cursor)
+	}
+	if !v.moved {
+		t.Error("moved was not set")
+	}
+}
+
+func TestSelectHeadNotRescannedAfterFilterClear(t *testing.T) {
+	env := filterEnv(t)
+	env.Head.Hash = testCommits()[1].Hash
+	v := NewMain(nil, nil)
+	v.builder = graph.New(graph.Unicode)
+	_, gen := v.startLoad()
+	v.SelectHead = true
+
+	// The batch filter hides HEAD's commit while the load continues:
+	// the batch's rows all fail the query, so nothing is appended.
+	v.SetFilter(env, "refactor")
+	v.HandleMsg(env, commitBatchMsg{gen: gen, commits: testCommits()[:2], next: func() tea.Msg { return commitBatchMsg{gen: gen} }})
+	if !v.SelectHead {
+		t.Fatal("selection consumed although HEAD was filtered out")
+	}
+	if n := v.Len(); n != 0 {
+		t.Fatalf("filtered rows = %d, want 0", n)
+	}
+
+	// A batch that does not refresh the pending selection either...
+	v.HandleMsg(env, commitBatchMsg{gen: gen, commits: testCommits()[2:]})
+	if !v.SelectHead {
+		t.Fatal("selection consumed on a batch without matching HEAD")
+	}
+
+	// ...and clearing the filter checks the rebuilt list once: the
+	// cursor still moves to HEAD.
+	v.SetFilter(env, "")
+	if v.SelectHead {
+		t.Fatal("selection stayed pending after the filter was cleared")
+	}
+	if v.Cursor != 1 {
+		t.Errorf("cursor = %d, want 1 (second commit = HEAD)", v.Cursor)
+	}
+}
+
+func TestSelectHeadWithinFilteredBatch(t *testing.T) {
+	env := filterEnv(t)
+	env.Head.Hash = testCommits()[1].Hash
+	v := NewMain(nil, nil)
+	v.builder = graph.New(graph.Unicode)
+	_, gen := v.startLoad()
+	v.SelectHead = true
+
+	// The filter is active when HEAD's batch arrives: the cursor is
+	// placed on the row's index among the filtered batch rows.
+	v.SetFilter(env, "parser")
+	v.HandleMsg(env, commitBatchMsg{gen: gen, commits: testCommits(), done: true})
+	if v.SelectHead || !v.moved {
+		t.Fatalf("selection = %v moved = %v, want false/true", v.SelectHead, v.moved)
+	}
+	if v.Cursor != 1 {
+		t.Errorf("cursor = %d, want 1 (second filtered row)", v.Cursor)
+	}
+	if r := v.rows[v.Cursor]; r.commit.Hash != env.Head.Hash {
+		t.Errorf("cursor row hash = %q", r.commit.Hash)
 	}
 }
