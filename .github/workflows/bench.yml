@@ -1,0 +1,71 @@
+name: Benchmark
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: Bench comparison
+    # Third-party forks cannot write pull request comments and their PRs also
+    # carry only read tokens, so keep this for branches of this repository.
+    if: github.event.pull_request.head.repo.fork == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          path: head
+
+      - name: Checkout base branch
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          ref: ${{ github.base_ref }}
+          path: base
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: head/go.mod
+          cache: true
+          # Both trees live under subdirectories, so point the cache at one of them.
+          cache-dependency-path: head/go.sum
+
+      - name: Install benchstat
+        # Pinned version so that comparisons stay comparable over time.
+        run: go install golang.org/x/perf/cmd/benchstat@v0.0.0-20261009192801-be2c69fb417e
+
+      - name: Run benchmarks on PR head
+        run: |
+          (cd head && go test -run '^$' -bench . -benchmem -count 10 \
+            ./internal/view/ ./internal/graph/) > bench-head.txt
+
+      - name: Run benchmarks on base branch
+        run: |
+          (cd base && go test -run '^$' -bench . -benchmem -count 10 \
+            ./internal/view/ ./internal/graph/) > bench-base.txt
+
+      - name: Compare with benchstat
+        run: |
+          benchstat bench-base.txt bench-head.txt > bench-diff.txt || true
+          {
+            echo '## Benchmark comparison (base → head)'
+            echo ''
+            echo '```'
+            cat bench-diff.txt
+            echo '```'
+          } > bench-report.md
+          cat bench-report.md
+
+      - name: Post benchmark comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: benchmark
+          path: bench-report.md
