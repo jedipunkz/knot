@@ -57,13 +57,22 @@ type Model struct {
 	autoTheme   bool
 	panels      []panel
 	initCmds    []tea.Cmd
+
+	userCancels    map[int]context.CancelFunc // in-flight captured user commands
+	nextUserCmd    int
+	formUserCancel *userCancel // registration owned by the open confirm form
 }
 
 type execDoneMsg struct{ err error }
 
 // New creates the model with the initial views.
 func New(env *view.Env, initial []view.View, warnings []string) *Model {
-	m := &Model{env: env, autoTheme: env.Cfg.Theme == "auto"}
+	m := &Model{
+		env:         env,
+		autoTheme:   env.Cfg.Theme == "auto",
+		userCancels: make(map[int]context.CancelFunc),
+		nextUserCmd: 1,
+	}
 	for _, v := range initial {
 		m.initCmds = append(m.initCmds, m.push(v, false))
 	}
@@ -295,6 +304,13 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		c := msg
 		m.confirm = &c
 		return m, nil
+	case userDoneMsg:
+		// The captured user command finished (or was canceled): drop
+		// its cancellation entry, then process the result message.
+		if msg.id >= 0 {
+			delete(m.userCancels, msg.id)
+		}
+		return m, m.processUserResult(msg.msg)
 	case view.PromptMsg:
 		m.prompt = &prompt{label: msg.Label, input: []rune(msg.Initial), onSubmit: msg.OnSubmit}
 		return m, nil

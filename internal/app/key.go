@@ -20,9 +20,16 @@ func (m *Model) key(msg tea.KeyPressMsg) tea.Cmd {
 	if m.confirm != nil {
 		c := m.confirm
 		m.confirm = nil
+		uc := m.formUserCancel
+		m.formUserCancel = nil
 		if k == "y" || k == "Y" {
+			// The user command stays registered so StopLoading can
+			// cancel it; its result message deregisters the entry.
 			m.setStatus("", false)
 			return c.OnYes
+		}
+		if uc != nil && uc.id >= 0 {
+			delete(m.userCancels, uc.id)
 		}
 		m.setStatus("Cancelled", false)
 		return nil
@@ -362,6 +369,11 @@ func (m *Model) dispatch(a keymap.Action) tea.Cmd {
 		for _, e := range m.stack {
 			e.v.B().Stop()
 		}
+		// Cancel in-flight captured user commands; their result
+		// messages deregister the entries when they come back.
+		for _, cancel := range m.userCancels {
+			cancel()
+		}
 		return view.Status("Stopped loading")
 	case keymap.ShowVersion:
 		return view.Status("knot " + env.Version)
@@ -389,6 +401,27 @@ func onOff(b bool) string {
 		return "on"
 	}
 	return "off"
+}
+
+// processUserResult runs the result messages of a captured user command
+// through the Update loop, splitting batches like the test driver does.
+func (m *Model) processUserResult(msg tea.Msg) tea.Cmd {
+	if b, ok := msg.(tea.BatchMsg); ok {
+		var out tea.BatchMsg
+		for _, c := range b {
+			if c == nil {
+				continue
+			}
+			out = append(out, m.processUserResult(c()))
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		// bubbletea unwraps a batch returned inside a command.
+		return func() tea.Msg { return out }
+	}
+	_, cmd := m.update(msg)
+	return cmd
 }
 
 func (m *Model) navigate(v view.View, a keymap.Action) tea.Cmd {
@@ -425,7 +458,7 @@ func (m *Model) runPrompt(s string) tea.Cmd {
 		if len(argv) == 0 {
 			return nil
 		}
-		return m.runCaptured(argv, "pager", strings.Join(argv, " "))
+		return m.runCapturedCmd(argv, "pager", strings.Join(argv, " "))
 	}
 	if n, err := strconv.Atoi(s); err == nil {
 		v := m.focused()
