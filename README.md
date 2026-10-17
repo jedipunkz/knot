@@ -169,6 +169,10 @@ Colors are `#rrggbb`, `#rgb`, a 256-color index or an ANSI name (`green`,
 
 ## Development
 
+Architecture and design decisions are documented in
+[DESIGN.md](DESIGN.md) (mirrored from issue #1); agents should read
+[AGENTS.md](AGENTS.md).
+
 ```sh
 go vet ./...
 go test -race ./...
