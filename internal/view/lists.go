@@ -253,11 +253,17 @@ func (v *RefsView) Do(env *Env, a keymap.Action) (tea.Cmd, bool) {
 		if r.Kind == git.RefBranch && r.WorktreePath != "" {
 			return Errorf(fmt.Errorf("branch %s is checked out in worktree %s; switch to it with the worktree view (w)", r.Short, env.Abbrev(r.WorktreePath))), true
 		}
-		target := r.Short
-		if r.Kind == git.RefTag {
-			target = r.Name
+		if r.Kind == git.RefBranch {
+			// switch attaches the branch and, anchored with "--", can
+			// never parse a crafted name (e.g. one starting with "-")
+			// as an option, keeping section 9.4 ("repo-injected values
+			// are never re-interpreted") intact.
+			return Confirm(env, a, "Checkout "+r.Short+"?", RunGit(env, "Checked out "+r.Short, "switch", "-q", "--", r.Short)), true
 		}
-		return Confirm(env, a, "Checkout "+r.Short+"?", RunGit(env, "Checked out "+r.Short, "checkout", "-q", target)), true
+		// Tags and other refs are passed with their full names, which
+		// never start with "-" (tag names keep the detached checkout of
+		// a tag).
+		return Confirm(env, a, "Checkout "+r.Short+"?", RunGit(env, "Checked out "+r.Short, "checkout", "-q", r.Name)), true
 	case keymap.BranchDelete:
 		if r.Kind != git.RefBranch {
 			return Status("Only local branches can be deleted"), true
@@ -265,7 +271,10 @@ func (v *RefsView) Do(env *Env, a keymap.Action) (tea.Cmd, bool) {
 		if r.IsHead || r.WorktreePath != "" {
 			return Errorf(fmt.Errorf("branch %s is checked out and cannot be deleted", r.Short)), true
 		}
-		return Confirm(env, a, "Delete branch "+r.Short+"? (git branch -d)", RunGit(env, "Deleted branch "+r.Short, "branch", "-d", r.Short)), true
+		// The short branch name is passed after "--" so a crafted name
+		// cannot be parsed as an option (modern git does not accept
+		// full ref names for branch -d); same as the worktree ops.
+		return Confirm(env, a, "Delete branch "+r.Short+"? (git branch -d)", RunGit(env, "Deleted branch "+r.Short, "branch", "-d", "--", r.Short)), true
 	}
 	return nil, false
 }
