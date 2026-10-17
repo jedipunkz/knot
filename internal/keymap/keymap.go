@@ -169,7 +169,7 @@ func Default() *Keymap {
 		"g": ViewGrep, "b": ViewBlame, "r": ViewRefs, "y": ViewStash, "h": ViewHelp, "s": ViewStatus,
 		"c": ViewStage, "w": ViewWorktree,
 		"q": ViewClose, "Q": Quit, "ctrl+c": Quit, "enter": Enter, "tab": ViewNext, "R": Refresh, "O": Maximize,
-		",": Parent, "up": Previous, "down": Next,
+		",": Parent, "up": Previous, "down": Next, "ctrl+p": Previous, "ctrl+n": Next,
 		"k": MoveUp, "j": MoveDown, "pgup": MovePageUp, "-": MovePageUp, "pgdown": MovePageDown, "space": MovePageDown,
 		"home": MoveFirstLine, "end": MoveLastLine,
 		"insert": ScrollLineUp, "delete": ScrollLineDown, "left": ScrollLeft, "right": ScrollRight, "|": ScrollFirstCol,

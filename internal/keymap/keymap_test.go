@@ -15,7 +15,7 @@ func TestTigDefaults(t *testing.T) {
 		{"main", "c", ViewStage}, {"main", "w", ViewWorktree},
 		{"main", "q", ViewClose}, {"main", "Q", Quit}, {"main", "enter", Enter}, {"main", "tab", ViewNext},
 		{"main", "R", Refresh}, {"main", "O", Maximize}, {"tree", ",", Parent},
-		{"main", "k", MoveUp}, {"main", "j", MoveDown}, {"main", "up", Previous}, {"main", "down", Next},
+		{"main", "k", MoveUp}, {"main", "j", MoveDown}, {"main", "up", Previous}, {"main", "down", Next}, {"main", "ctrl+p", Previous}, {"main", "ctrl+n", Next},
 		{"main", "pgup", MovePageUp}, {"main", "-", MovePageUp}, {"main", "pgdown", MovePageDown}, {"main", "space", MovePageDown},
 		{"main", "home", MoveFirstLine}, {"main", "end", MoveLastLine},
 		{"main", "insert", ScrollLineUp}, {"main", "delete", ScrollLineDown},

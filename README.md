@@ -52,7 +52,7 @@ Press `h` in knot for the full list of the active key bindings.
 | `b` | blame | `p` | pager |
 | `h` | help | `w` | worktree (knot only) |
 
-Common keys follow tig: `j`/`k` move, `Enter` opens, `q` closes the view,
+Common keys follow tig: `j`/`k`, `Up`/`Down` and `Ctrl-N`/`Ctrl-P` move, `Enter` opens, `q` closes the view,
 `Q` quits, `Tab` switches the focus in a split, `/` `?` `n` `N` search,
 `:` opens the prompt (`:42` jumps to a line, `:!git log -1` shows command
 output), `#` `D` `A` `G` `~` `F` `W` `X` `%` `$` toggle display options,
