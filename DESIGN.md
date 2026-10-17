@@ -119,7 +119,7 @@ type Env struct {
 ```
 
 - **View stack**: like tig, opening a view pushes it; `q` closes the top view (the child when split); `Q` quits. `Enter` on a commit opens a child view in a split (`[ui] split-direction` horizontal / vertical / auto, `split-ratio`). Pressing a view key for a list view that is already open (main, log, refs, status, stash, reflog, help, worktree, grep, pager) returns to it and closes the views above it.
-- **Loading**: every load runs in a goroutine with a `context.Context`; `z` cancels all loads. The main view streams `git log` output in batches of 500 commits so the first screen renders immediately; other views render when their command finishes.
+- **Loading**: every load runs in a goroutine with a `context.Context`; `z` cancels all loads. The main view streams `git log` output in batches of 500 commits so the first screen renders immediately; the log and diff views stream their text output through the same ingestion machinery in fixed line batches (the commit-header restyle of a diff runs once, on completion). Smaller text outputs (pager, blob, stage, status) render when their command finishes.
 - **Action dispatch**: keys map to named actions (`view-main`, `move-down`, `status-update`, ...). Resolution order: view-specific binding → generic binding. The focused view's `Do` gets the action first, then the app handles generic actions. Rendering uses roles, so theme changes and display toggles apply without reloading.
 - **Messages from views to the app**: `OpenMsg`, `StatusMsg`, `ConfirmMsg`, `PromptMsg`, `ReloadMsg` (reload refs and all open views after a git write), `CloseMsg`, `SwitchWorktreeMsg`, `PreviewThemeMsg`, `ExecMsg` (run a process with the terminal, then reload).
 
@@ -495,7 +495,7 @@ Open:
 |---|---|---|
 | One package per view under `internal/view/<name>/`, plus `internal/ui/` | One `internal/view` package; graph in `internal/graph` | Views share `Base`, `Env`, rendering and search |
 | `View` with `ID/Init/Update/Render/Actions/Selected`, `Context` | Interface and `Env` in 5.1 | Rows are segments rendered by the app, so themes and toggles apply without reloading |
-| Streaming for `git log` and `git blame` | Streaming for the main view only | The main view is the large case; others are loaded in one call |
+| Streaming for `git log` and `git blame` | Streaming for the main, log and diff views | The main view is the large case; the log and diff text outputs are streamed in line batches (issue #13) |
 | `git blame --incremental` | `git blame --porcelain` | Simpler parsing |
 | Optional `[theme.auto]` | `theme = "auto"` + `[theme-auto]` | `theme = "..."` and `[theme.auto]` cannot coexist in TOML |
 | Draft schema values (`date-format = "relative"`, `author = "abbreviated"`, `highlight = "word"`, `theme = "dark"`) | tig defaults (absolute, full, line, default) | The draft values were examples |

@@ -79,16 +79,26 @@ func (v *DiffView) args(env *Env) []string {
 	return args
 }
 
+// Load streams the diff line by line with the chunked ingestion the log
+// view uses, so a huge commit's patch renders progressively instead of
+// buffering the whole output. The commit-header restyle waits for the done
+// message: it must see the complete header block once, not each batch.
 func (v *DiffView) Load(env *Env) tea.Cmd {
-	return v.gitText(env, v.args(env), classifyDiff)
+	return v.streamText(env, streamBatch, classifyDiff, v.args(env)...)
 }
 
 func (v *DiffView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
-	v.handleText(env, msg, classifyDiff)
-	if v.Commit != "" {
+	cmd, handled := v.handleChunk(env, msg, classifyDiff)
+	if !handled {
+		return nil
+	}
+	if v.Commit == "" {
+		return cmd
+	}
+	if m, ok := msg.(textChunkMsg); ok && m.done && !v.stale(m.gen) {
 		v.restyleCommitHeader(env)
 	}
-	return nil
+	return cmd
 }
 
 // headerFields are the labeled fields of git show --format=fuller output,

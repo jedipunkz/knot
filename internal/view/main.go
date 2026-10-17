@@ -17,6 +17,40 @@ type mainRow struct {
 	graph   []graph.Cell
 	special string // "unstaged" / "staged" pseudo commits
 	hl      *rowHighlight
+	ft      *mainFilterText // precomputed filterable text, shared by copies
+}
+
+// mainFilterText is a row's precomputed filterable text, built once when
+// the commit's batch arrives and refreshed in place (through the ft
+// pointer, so every copy of the row sees the update) when the author
+// display mode or the ref decorations changed since it was cached. The
+// per-keystroke filter pass then matches against these strings without
+// expanding them again.
+type mainFilterText struct {
+	mode     string // author display mode author was built under
+	subject  string // expanded subject
+	author   string // formatted author
+	refs     string // refText's output for the commit
+	decorN   int    // number of decorations when refs was cached
+	headHash string // HEAD hash when refs was cached
+	fields   []filterField
+}
+
+// refresh rebuilds the cached text and field list.
+func (ft *mainFilterText) refresh(env *Env, c git.Commit) {
+	ft.mode = env.Opts.Author
+	ft.subject = ExpandTabs(c.Subject, 1)
+	ft.author = FormatAuthor(c.AuthorName, c.AuthorEmail, env.Opts.Author)
+	ft.decorN = len(env.Decor[c.Hash])
+	ft.headHash = env.Head.Hash
+	ft.refs = refText(env, c.Hash)
+	ft.fields = []filterField{
+		{text: ft.subject},
+		{text: c.AuthorName},
+		{text: ft.author},
+		{text: c.Hash, prefix: true},
+		{text: ft.refs},
+	}
 }
 
 // rowHighlight holds the fuzzy-filter match positions of one row. Positions
@@ -164,7 +198,12 @@ func (v *MainView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
 		batch := make([]mainRow, 0, len(m.commits))
 		for _, c := range m.commits {
 			v.authorWidth = max(v.authorWidth, len([]rune(FormatAuthor(c.AuthorName, c.AuthorEmail, env.Opts.Author))))
-			batch = append(batch, mainRow{commit: c, graph: v.builder.Add(c.Hash, c.Parents)})
+			r := mainRow{commit: c, graph: v.builder.Add(c.Hash, c.Parents)}
+			// The filterable text is precomputed once here instead of
+			// per keystroke during the filter passes.
+			r.ft = &mainFilterText{}
+			r.ft.refresh(env, c)
+			batch = append(batch, r)
 		}
 		v.all = append(v.all, batch...)
 		var newRows []mainRow
@@ -240,7 +279,11 @@ func (v *MainView) Row(env *Env, i int) []Seg {
 		case "author":
 			if opts.Author != "off" {
 				w := min(max(v.authorWidth, 6), 20)
-				auth := Fit(FormatAuthor(c.AuthorName, c.AuthorEmail, opts.Author), w)
+				authSrc := FormatAuthor(c.AuthorName, c.AuthorEmail, opts.Author)
+				if r.ft != nil && r.ft.mode == opts.Author {
+					authSrc = r.ft.author
+				}
+				auth := Fit(authSrc, w)
 				if hl != nil && len(hl.author) > 0 {
 					off := 0
 					segs = append(segs, splitMatched(env.Theme, theme.Author, auth, hl.author, &off)...)
@@ -293,6 +336,9 @@ func (v *MainView) Row(env *Env, i int) []Seg {
 				continue
 			}
 			subj := ExpandTabs(c.Subject, 1)
+			if r.ft != nil {
+				subj = r.ft.subject
+			}
 			if hl != nil && len(hl.subject) > 0 {
 				off := 0
 				segs = append(segs, splitMatched(env.Theme, theme.Default, subj, hl.subject, &off)...)
@@ -430,7 +476,7 @@ func (v *MainView) filterRows(env *Env, in []mainRow) []mainRow {
 			if r.special != "" {
 				return nil
 			}
-			return mainFilterFields(env, r.commit)
+			return mainFilterFields(env, r)
 		},
 		func(r mainRow, m [][]int) mainRow {
 			nr := r
@@ -442,15 +488,18 @@ func (v *MainView) filterRows(env *Env, in []mainRow) []mainRow {
 // mainFilterFields is the commit's filterable fields: subject, the raw
 // author name (matched without positions; the highlighted author text is
 // the formatted one), the formatted author, the commit ID (prefix only)
-// and the reference decoration text.
-func mainFilterFields(env *Env, c git.Commit) []filterField {
-	return []filterField{
-		{text: ExpandTabs(c.Subject, 1)},
-		{text: c.AuthorName},
-		{text: FormatAuthor(c.AuthorName, c.AuthorEmail, env.Opts.Author)},
-		{text: c.Hash, prefix: true},
-		{text: refText(env, c.Hash)},
+// and the reference decoration text. The strings come from the row's cache
+// when current, refreshed through the shared cache otherwise.
+func mainFilterFields(env *Env, r mainRow) []filterField {
+	c := r.commit
+	if r.ft == nil {
+		r.ft = &mainFilterText{}
 	}
+	ft := r.ft
+	if ft.mode != env.Opts.Author || ft.decorN != len(env.Decor[c.Hash]) || ft.headHash != env.Head.Hash {
+		ft.refresh(env, c)
+	}
+	return ft.fields
 }
 
 // mainHighlight packs the matched field positions into a rowHighlight.
