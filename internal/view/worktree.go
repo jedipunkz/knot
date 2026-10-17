@@ -329,7 +329,8 @@ func worktreeHighlight(m [][]int) *wtHighlight {
 }
 
 // FilterOnOpen focuses the filter bar as soon as the worktree view opens;
-// Ctrl-P / Ctrl-N then move between the bar and the list.
+// Ctrl-N (or Enter / Down) returns to the list, and Ctrl-P on the first
+// list row goes back to the bar.
 func (v *WorktreeView) FilterOnOpen() bool { return true }
 
 // Info is the selected worktree's row content, shown in the key bar.

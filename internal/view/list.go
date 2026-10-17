@@ -56,8 +56,9 @@ type Filterable interface {
 
 // FilterStarter is implemented by filterable views that want the filter
 // bar focused as soon as the view is opened (currently the worktree
-// view). While such a view is focused, Ctrl-P / Ctrl-N move between the
-// bar and the list.
+// view). Enter / Ctrl-N / Down return to the list, where the common
+// navigation keys move the cursor; Ctrl-P on the first row re-focuses
+// the bar.
 type FilterStarter interface {
 	FilterOnOpen() bool
 }
