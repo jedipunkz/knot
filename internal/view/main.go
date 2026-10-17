@@ -368,7 +368,7 @@ func refSegs(env *Env, hash string, hl []int) []Seg {
 }
 
 func (v *MainView) current() *mainRow {
-	if v.Cursor < 0 || v.Cursor >= len(v.rows) {
+	if !v.onRow(len(v.rows)) {
 		return nil
 	}
 	return &v.rows[v.Cursor]
@@ -422,72 +422,41 @@ func (v *MainView) FilterStatus() (string, int, int, bool) {
 }
 
 // filterRows returns the rows matching the active query, with their match
-// positions computed for highlighting.
+// positions computed for highlighting. Pseudo rows are hidden while a
+// filter is active.
 func (v *MainView) filterRows(env *Env, in []mainRow) []mainRow {
-	tokens := strings.Fields(v.query)
-	if len(tokens) == 0 {
-		return in
-	}
-	out := make([]mainRow, 0, len(in))
-	for _, r := range in {
-		if r.special != "" {
-			continue
-		}
-		hl := matchRow(env, r.commit, tokens)
-		if hl == nil {
-			continue
-		}
-		nr := r
-		nr.hl = hl
-		out = append(out, nr)
-	}
-	return out
+	return filterRowsOf(in, strings.Fields(v.query),
+		func(r mainRow) []filterField {
+			if r.special != "" {
+				return nil
+			}
+			return mainFilterFields(env, r.commit)
+		},
+		func(r mainRow, m [][]int) mainRow {
+			nr := r
+			nr.hl = mainHighlight(m)
+			return nr
+		})
 }
 
-// matchRow matches all tokens against the filterable fields of a commit:
-// subject, ref names and author (fuzzy) and the commit ID (prefix only).
-// Every token must match at least one field. It returns nil when the row
-// does not match.
-func matchRow(env *Env, c git.Commit, tokens []string) *rowHighlight {
-	refs := refText(env, c.Hash)
-	displayed := FormatAuthor(c.AuthorName, c.AuthorEmail, env.Opts.Author)
-	var hl *rowHighlight
-	for _, tok := range tokens {
-		var h rowHighlight
-		matched := false
-		if pos, ok := fuzzyMatch(tok, ExpandTabs(c.Subject, 1)); ok {
-			matched = true
-			h.subject = pos
-		}
-		if _, ok := fuzzyMatch(tok, c.AuthorName); ok {
-			matched = true
-		}
-		// Highlight positions refer to the formatted author; they exist
-		// only when the token matches it too.
-		if pos, ok := fuzzyMatch(tok, displayed); ok {
-			matched = true
-			h.author = pos
-		}
-		if len(c.Hash) >= len(tok) && strings.HasPrefix(strings.ToLower(c.Hash), strings.ToLower(tok)) {
-			matched = true
-			h.id = len(tok)
-		}
-		if pos, ok := fuzzyMatch(tok, refs); ok {
-			matched = true
-			h.refs = pos
-		}
-		if !matched {
-			return nil
-		}
-		if hl == nil {
-			hl = &rowHighlight{}
-		}
-		hl.subject = unionPos(hl.subject, h.subject)
-		hl.author = unionPos(hl.author, h.author)
-		hl.id = max(hl.id, h.id)
-		hl.refs = unionPos(hl.refs, h.refs)
+// mainFilterFields is the commit's filterable fields: subject, the raw
+// author name (matched without positions; the highlighted author text is
+// the formatted one), the formatted author, the commit ID (prefix only)
+// and the reference decoration text.
+func mainFilterFields(env *Env, c git.Commit) []filterField {
+	return []filterField{
+		{text: ExpandTabs(c.Subject, 1)},
+		{text: c.AuthorName},
+		{text: FormatAuthor(c.AuthorName, c.AuthorEmail, env.Opts.Author)},
+		{text: c.Hash, prefix: true},
+		{text: refText(env, c.Hash)},
 	}
-	return hl
+}
+
+// mainHighlight packs the matched field positions into a rowHighlight.
+// The author field positions refer to the formatted author text.
+func mainHighlight(m [][]int) *rowHighlight {
+	return &rowHighlight{subject: m[0], author: m[2], id: len(m[3]), refs: m[4]}
 }
 
 func (v *MainView) Enter(env *Env) tea.Cmd {

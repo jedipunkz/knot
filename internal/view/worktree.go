@@ -266,7 +266,7 @@ func (v *WorktreeView) Row(env *Env, i int) []Seg {
 
 // current returns the selected row of the visible list.
 func (v *WorktreeView) current() *worktreeRow {
-	if v.Cursor < 0 || v.Cursor >= len(v.rows) {
+	if !v.onRow(len(v.rows)) {
 		return nil
 	}
 	return &v.rows[v.Cursor]
@@ -300,62 +300,32 @@ func (v *WorktreeView) FilterStatus() (string, int, int, bool) {
 
 // refilter rebuilds the visible rows from the loaded ones.
 func (v *WorktreeView) refilter(env *Env) {
-	tokens := strings.Fields(v.query)
-	if len(tokens) == 0 {
-		v.rows = v.all
-		return
-	}
-	out := make([]worktreeRow, 0, len(v.all))
-	for _, r := range v.all {
-		hl := matchWorktreeRow(env, r, tokens)
-		if hl == nil {
-			continue
-		}
-		nr := r
-		nr.hl = hl
-		out = append(out, nr)
-	}
-	v.rows = out
+	v.rows = filterRowsOf(v.all, strings.Fields(v.query),
+		func(r worktreeRow) []filterField {
+			return worktreeFilterFields(env, r)
+		},
+		func(r worktreeRow, m [][]int) worktreeRow {
+			nr := r
+			nr.hl = worktreeHighlight(m)
+			return nr
+		})
 }
 
-// matchWorktreeRow matches all tokens against the worktree path, branch,
-// HEAD commit ID and subject; every token must match at least one field.
-func matchWorktreeRow(env *Env, r worktreeRow, tokens []string) *wtHighlight {
-	branch := wtBranch(r.wt)
-	var hl *wtHighlight
-	for _, tok := range tokens {
-		var h wtHighlight
-		matched := false
-		if pos, ok := fuzzyMatch(tok, env.Abbrev(r.wt.Path)); ok {
-			matched = true
-			h.path = pos
-		}
-		if pos, ok := fuzzyMatch(tok, branch); ok {
-			matched = true
-			h.branch = pos
-		}
-		if _, ok := fuzzyMatch(tok, r.subject); ok {
-			matched = true
-			if pos, ok := fuzzyMatch(tok, r.subject); ok {
-				h.subject = pos
-			}
-		}
-		if strings.HasPrefix(strings.ToLower(r.wt.Head), strings.ToLower(tok)) {
-			matched = true
-			h.id = len(tok)
-		}
-		if !matched {
-			return nil
-		}
-		if hl == nil {
-			hl = &wtHighlight{}
-		}
-		hl.path = unionPos(hl.path, h.path)
-		hl.branch = unionPos(hl.branch, h.branch)
-		hl.subject = unionPos(hl.subject, h.subject)
-		hl.id = max(hl.id, h.id)
+// worktreeFilterFields is the worktree row's filterable fields: the
+// abbreviated worktree path, the branch (placeholders included), the HEAD
+// commit's subject and the HEAD commit ID (prefix only).
+func worktreeFilterFields(env *Env, r worktreeRow) []filterField {
+	return []filterField{
+		{text: env.Abbrev(r.wt.Path)},
+		{text: wtBranch(r.wt)},
+		{text: r.subject},
+		{text: r.wt.Head, prefix: true},
 	}
-	return hl
+}
+
+// worktreeHighlight packs the matched field positions into a wtHighlight.
+func worktreeHighlight(m [][]int) *wtHighlight {
+	return &wtHighlight{path: m[0], branch: m[1], subject: m[2], id: len(m[3])}
 }
 
 // FilterOnOpen focuses the filter bar as soon as the worktree view opens;
@@ -364,7 +334,7 @@ func (v *WorktreeView) FilterOnOpen() bool { return true }
 
 // Info is the selected worktree's row content, shown in the key bar.
 func (v *WorktreeView) Info(env *Env) []Seg {
-	if v.Cursor < 0 || v.Cursor >= len(v.rows) {
+	if !v.onRow(len(v.rows)) {
 		return nil
 	}
 	return v.Row(env, v.Cursor)

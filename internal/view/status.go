@@ -130,10 +130,10 @@ func (v *StatusView) Row(env *Env, i int) []Seg {
 }
 
 func (v *StatusView) current() *statusRow {
-	if v.Cursor < len(v.rows) {
-		return &v.rows[v.Cursor]
+	if !v.onRow(len(v.rows)) {
+		return nil
 	}
-	return nil
+	return &v.rows[v.Cursor]
 }
 
 func (v *StatusView) Enter(env *Env) tea.Cmd {

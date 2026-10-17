@@ -326,10 +326,10 @@ func (v *BlameView) Row(env *Env, i int) []Seg {
 }
 
 func (v *BlameView) current() *git.BlameLine {
-	if v.Cursor < len(v.lines) {
-		return &v.lines[v.Cursor]
+	if !v.onRow(len(v.lines)) {
+		return nil
 	}
-	return nil
+	return &v.lines[v.Cursor]
 }
 
 func (v *BlameView) Enter(env *Env) tea.Cmd {
@@ -459,7 +459,7 @@ func (v *GrepView) Row(env *Env, i int) []Seg {
 }
 
 func (v *GrepView) Enter(env *Env) tea.Cmd {
-	if v.Cursor < len(v.rows) {
+	if v.onRow(len(v.rows)) {
 		m := v.rows[v.Cursor].match
 		line := m.Line
 		if v.rows[v.Cursor].file {
@@ -471,7 +471,7 @@ func (v *GrepView) Enter(env *Env) tea.Cmd {
 }
 
 func (v *GrepView) Do(env *Env, a keymap.Action) (tea.Cmd, bool) {
-	if a == keymap.Edit && v.Cursor < len(v.rows) {
+	if a == keymap.Edit && v.onRow(len(v.rows)) {
 		m := v.rows[v.Cursor].match
 		return EditorCmd(env, m.File, m.Line), true
 	}
@@ -479,7 +479,7 @@ func (v *GrepView) Do(env *Env, a keymap.Action) (tea.Cmd, bool) {
 }
 
 func (v *GrepView) Selection(env *Env) Selection {
-	if v.Cursor < len(v.rows) {
+	if v.onRow(len(v.rows)) {
 		m := v.rows[v.Cursor].match
 		return Selection{File: m.File, Line: m.Line, Directory: path.Dir(m.File)}
 	}

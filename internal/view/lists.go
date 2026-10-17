@@ -58,7 +58,7 @@ func (v *ReflogView) Row(env *Env, i int) []Seg {
 }
 
 func (v *ReflogView) Enter(env *Env) tea.Cmd {
-	if v.Cursor < len(v.entries) {
+	if v.onRow(len(v.entries)) {
 		return Msg(OpenMsg{View: NewDiff(v.entries[v.Cursor].Hash, nil), Split: true})
 	}
 	return nil
@@ -67,7 +67,7 @@ func (v *ReflogView) Enter(env *Env) tea.Cmd {
 func (v *ReflogView) Do(env *Env, a keymap.Action) (tea.Cmd, bool) { return nil, false }
 
 func (v *ReflogView) Selection(env *Env) Selection {
-	if v.Cursor < len(v.entries) {
+	if v.onRow(len(v.entries)) {
 		h := v.entries[v.Cursor].Hash
 		return Selection{Commit: h, Rev: h}
 	}
@@ -128,10 +128,10 @@ func (v *StashView) Row(env *Env, i int) []Seg {
 }
 
 func (v *StashView) current() *git.Stash {
-	if v.Cursor < len(v.stashes) {
-		return &v.stashes[v.Cursor]
+	if !v.onRow(len(v.stashes)) {
+		return nil
 	}
-	return nil
+	return &v.stashes[v.Cursor]
 }
 
 func (v *StashView) Enter(env *Env) tea.Cmd {
@@ -227,10 +227,10 @@ func (v *RefsView) Row(env *Env, i int) []Seg {
 }
 
 func (v *RefsView) current() *git.Ref {
-	if v.Cursor < len(v.refs) {
-		return &v.refs[v.Cursor]
+	if !v.onRow(len(v.refs)) {
+		return nil
 	}
-	return nil
+	return &v.refs[v.Cursor]
 }
 
 func (v *RefsView) Enter(env *Env) tea.Cmd {
