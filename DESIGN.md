@@ -497,3 +497,5 @@ Open:
 | `!` in refs = tig's `git branch -D` | `git branch -d` | Do not delete unmerged branches |
 | `!` in stage reverts the chunk (tig) | Reverts the whole file | Simpler and confirmed by a dialog |
 | Bubbles widgets | Own list / prompt / confirm | Small and fully controlled |
+| Diff header as raw `git show --format=fuller` text | Rebuilt as segmented theme-colored rows: commit, Refs (main-view ref decorations), Merge, Author, AuthorDate, Commit, CommitDate; dim labels (`line-number` role), values in `commit-id` / author / `ref-*` / `date` roles | Consistent theming across views; the issue #2 follow-up added the Refs row |
+| Fuzzy filter bar | Not in the draft; designed and implemented (issue #2) | fzf-style narrowing of the main view |
