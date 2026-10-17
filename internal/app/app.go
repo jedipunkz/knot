@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -49,14 +50,16 @@ type Model struct {
 	height      int
 	nextID      int
 
-	status    string
-	statusErr bool
-	prompt    *prompt
-	filterBar *filterBar
-	confirm   *view.ConfirmMsg
-	autoTheme bool
-	panels    []panel
-	initCmds  []tea.Cmd
+	status      string
+	statusErr   bool
+	prompt      *prompt
+	filterBar   *filterBar
+	confirm     *view.ConfirmMsg
+	frame       int // loading spinner frame
+	spinRunning bool
+	autoTheme   bool
+	panels      []panel
+	initCmds    []tea.Cmd
 }
 
 type execDoneMsg struct{ err error }
@@ -194,8 +197,63 @@ func (m *Model) setStatus(text string, isErr bool) {
 	m.status, m.statusErr = text, isErr
 }
 
+// spinnerInterval controls the loading spinner frame rate.
+var spinnerInterval = 120 * time.Millisecond
+
+// spinnerFrames animates the loading indicator; the ASCII variant is used
+// when the user turned ASCII line graphics on.
+var (
+	spinnerFrames      = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	spinnerFramesASCII = []string{"|", "/", "-", "\\"}
+)
+
+// spinnerMsg advances the spinner while a view is loading.
+type spinnerMsg struct{}
+
+// anyLoading reports whether any open view is still loading.
+func (m *Model) anyLoading() bool {
+	for _, e := range m.stack {
+		if e.v.B().Loading {
+			return true
+		}
+	}
+	return false
+}
+
+// spinner returns the current spinner frame.
+func (m *Model) spinner() string {
+	frames := spinnerFrames
+	if m.env.Opts.ASCII {
+		frames = spinnerFramesASCII
+	}
+	return frames[m.frame%len(frames)]
+}
+
+// spinTick schedules the next spinner frame.
+func (m *Model) spinTick() tea.Cmd {
+	return tea.Tick(spinnerInterval, func(time.Time) tea.Msg { return spinnerMsg{} })
+}
+
 // Update implements tea.Model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(spinnerMsg); ok {
+		if !m.anyLoading() {
+			m.spinRunning = false
+			return m, nil
+		}
+		m.frame++
+		return m, m.spinTick()
+	}
+	model, cmd := m.update(msg)
+	// Start the spinner when a message turned on a background load.
+	if !m.spinRunning && m.anyLoading() {
+		m.spinRunning = true
+		cmd = tea.Batch(cmd, m.spinTick())
+	}
+	return model, cmd
+}
+
+func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -856,18 +914,17 @@ func (m *Model) render() (string, *tea.Cursor) {
 	return body + "\n" + line, cursor
 }
 
-// renderPanel draws a view with its filter bar (when active) above the
-// content and its title bar below the content.
+// renderPanel draws a view with its filter bar (filterable views show it
+// permanently, dimmed when unfocused) above the content and its title bar
+// below the content.
 func (m *Model) renderPanel(idx, x, y, w, h int) (string, *tea.Cursor) {
 	v := m.stack[idx].v
 	var cur *tea.Cursor
 	bar := ""
 	barH := 0
-	if f, ok := v.(view.Filterable); ok && idx == m.focusedIdx() {
-		if q, _, _, _ := f.FilterStatus(); m.filterBar != nil || q != "" {
-			barH = 1
-			bar, cur = m.filterBarRow(f, x, y, w)
-		}
+	if f, ok := v.(view.Filterable); ok {
+		barH = 1
+		bar, cur = m.filterBarRow(f, x, y, w, idx == m.focusedIdx())
 	}
 	m.panels = append(m.panels, panel{x: x, y: y + barH, w: w, h: h - 1 - barH, idx: idx})
 	content := view.Render(m.env, v, w, h-1-barH)
@@ -877,7 +934,7 @@ func (m *Model) renderPanel(idx, x, y, w, h int) (string, *tea.Cursor) {
 	}
 	title := v.Title(m.env)
 	if v.B().Loading {
-		title += "  Loading…"
+		title += "  " + m.spinner() + " Loading"
 	}
 	pos := view.Position(v)
 	gap := w - ansi.StringWidth(title) - ansi.StringWidth(pos) - 2
@@ -895,33 +952,54 @@ func (m *Model) renderPanel(idx, x, y, w, h int) (string, *tea.Cursor) {
 }
 
 // filterBarRow renders the one-row filter bar shown at the top of a
-// filterable view's panel. While the query is non-empty it stays visible
-// with "<matches>/<loaded>" on the right side.
-func (m *Model) filterBarRow(f view.Filterable, x, y, w int) (string, *tea.Cursor) {
+// filterable view's panel. It is always visible: dim while unfocused, with
+// the "<matches>/<loaded>" count on the right ("…" appended while loading)
+// and the text cursor while the bar is focused.
+func (m *Model) filterBarRow(f view.Filterable, x, y, w int, focused bool) (string, *tea.Cursor) {
 	th := m.env.Theme
+	labelRole, inputRole, countRole := theme.LineNumber, theme.LineNumber, theme.LineNumber
+	// Edited means the bar holds the focus (the text cursor is drawn).
+	edited := focused && m.filterBar != nil
+	if edited {
+		labelRole, inputRole = theme.Prompt, theme.Default
+	}
 	q, matches, loaded, loading := f.FilterStatus()
-	text := "Search: "
-	if m.filterBar != nil {
-		text += string(m.filterBar.input)
-	} else {
-		text += q
+	input := q
+	if focused && m.filterBar != nil {
+		input = string(m.filterBar.input)
 	}
 	right := fmt.Sprintf("%d/%d", matches, loaded)
 	if loading {
 		right += "…"
 	}
-	gap := w - ansi.StringWidth(text) - ansi.StringWidth(right) - 2
+	label := " Search:"
+	in := input
+	if input == "" && !edited {
+		in = "(Ctrl-P to filter)"
+	}
+	in = " " + in
+	gap := w - ansi.StringWidth(label) - ansi.StringWidth(in) - ansi.StringWidth(right) - 2
 	var row string
-	if gap >= 1 {
-		row = " " + text + strings.Repeat(" ", gap) + right + " "
-	} else {
-		row = view.Fit(" "+text, w)
+	switch {
+	case gap >= 1:
+		row = th.Render(labelRole, label) + th.Render(inputRole, in) +
+			strings.Repeat(" ", gap) + th.Render(countRole, right) + " "
+	default:
+		text := th.Render(labelRole, label) + th.Render(inputRole, in)
+		curLen := ansi.StringWidth(text)
+		if curLen < w {
+			text = strings.TrimRight(ansi.Truncate(text, w-1, "…"), " ")
+		} else {
+			text = ansi.Truncate(text, w-1, "…")
+		}
+		row = text + strings.Repeat(" ", max(w-ansi.StringWidth(text), 0))
 	}
 	var cur *tea.Cursor
-	if m.filterBar != nil {
-		cur = tea.NewCursor(x+min(ansi.StringWidth(" "+text), w-1), y)
+	if edited {
+		cx := x + ansi.StringWidth(label) + ansi.StringWidth(in)
+		cur = tea.NewCursor(min(cx, x+w-1), y)
 	}
-	return th.Render(theme.Prompt, view.Fit(row, w)), cur
+	return row, cur
 }
 
 func (m *Model) statusLine(w, y int) (string, *tea.Cursor) {
@@ -937,12 +1015,12 @@ func (m *Model) statusLine(w, y int) (string, *tea.Cursor) {
 	case m.confirm != nil:
 		return th.Render(theme.Warning, view.Fit(m.confirm.Question+" [y/N]", w)), nil
 	}
-	right := m.env.WorktreeName()
+	right := th.Render(theme.LineNumber, m.env.WorktreeName())
 	switch {
 	case m.env.Head.Branch != "":
-		right += " [" + m.env.Head.Branch + "]"
+		right += " " + th.Render(theme.RefHead, "["+m.env.Head.Branch+"]")
 	case m.env.Head.Hash != "":
-		right += " [detached " + view.Short(m.env.Head.Hash, 7) + "]"
+		right += " " + th.Render(theme.RefHead, "[detached "+view.Short(m.env.Head.Hash, 7)+"]")
 	}
 	left := m.status
 	role := theme.StatusBar

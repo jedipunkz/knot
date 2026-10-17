@@ -58,16 +58,17 @@ Common keys follow tig: `j`/`k`, `Up`/`Down` and `Ctrl-N`/`Ctrl-P` move, `Enter`
 output), `#` `D` `A` `G` `~` `F` `W` `X` `%` `$` toggle display options,
 `o` opens the option menu, `T` opens the theme picker.
 
-Fuzzy filter (main view): pressing `Ctrl-P` (or `Up`) while the cursor is on
-the first row moves into a filter bar at the top of the view — like tig, where
-`Ctrl-P` at the top was unused. Typing fuzzy-filters the commit list live on
+Fuzzy filter (main view): a filter bar sits at the top of the main view at all
+times, showing the live `<matches>/<loaded>` count. Pressing `Ctrl-P` (or `Up`)
+while the cursor is on the first row focuses it — like tig, where `Ctrl-P` at
+the top was unused. Typing fuzzy-filters the commit list live on
 the commit subject, ref names and author, and by commit ID prefix; tokens
 separated by `Space` are ANDed. `Enter`, `Ctrl-N` or `Down` return to the list
 with the filter kept, `Esc` in the bar clears it and `Esc` in the filtered list
 clears the filter while staying on the selected commit. The revision graph and
 the "Unstaged / Staged changes" rows are hidden while a filter is active. The
 `filter` action (unbound by default) opens the bar from any row and can be
-bound in `knot.toml`.
+bound in `knot.toml`; a spinner animates in the title bar while content loads.
 
 Staging: in the status view `u` stages / unstages a file (on a section header:
 all files of the section), `!` discards changes, `C` commits, `M` runs

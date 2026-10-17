@@ -152,7 +152,7 @@ func TestWorktreeSwitchOpensMainAtHead(t *testing.T) {
 		t.Errorf("cursor on %s, want HEAD %s", sel.Commit, m.env.Head.Hash)
 	}
 	line, _ := m.statusLine(100, 29)
-	if !strings.Contains(line, "repo-topic [topic]") {
+	if !strings.Contains(line, "repo-topic") || !strings.Contains(line, "[topic]") {
 		t.Errorf("status bar = %q", line)
 	}
 }
@@ -259,6 +259,17 @@ func TestMainFilterBar(t *testing.T) {
 	if n := m.focused().Len(); n != 2 {
 		t.Fatalf("rows = %d, want 2", n)
 	}
+	// The filter bar is visible from the start, without focus.
+	out0, cur0 := m.render()
+	if !strings.Contains(out0, "Search:") || !strings.Contains(out0, "(Ctrl-P to filter)") {
+		t.Errorf("initial render has no filter bar: %q", firstLine(out0))
+	}
+	if !strings.Contains(out0, "2/2") {
+		t.Errorf("initial render has no match count: %q", firstLine(out0))
+	}
+	if cur0 != nil {
+		t.Error("the initial filter bar must not hold the cursor")
+	}
 	// k at row 0 does not enter the bar.
 	press(t, m, "k")
 	if m.filterBar != nil {
@@ -338,6 +349,29 @@ func TestMainFilterBar(t *testing.T) {
 	press(t, m, "ctrl+c")
 	if m.filterBar != nil || m.focused().Len() != 2 {
 		t.Fatalf("ctrl+c in the bar: bar=%v rows=%d", m.filterBar != nil, m.focused().Len())
+	}
+}
+
+func TestLoadingSpinner(t *testing.T) {
+	main, _ := setupRepo(t)
+	m := newModel(t, main, nil, view.NewMain(nil, nil))
+	// The title shows the spinner while the view loads.
+	m.focused().B().Loading = true
+	m.frame = 1
+	if got := m.spinner(); got != spinnerFrames[1] {
+		t.Errorf("frame = %q, want %q", got, spinnerFrames[1])
+	}
+	out, _ := m.render()
+	if !strings.Contains(out, spinnerFrames[1]+" Loading") {
+		t.Errorf("render has no spinner: %q", firstLine(out))
+	}
+	if _, cmd := m.Update(spinnerMsg{}); cmd == nil {
+		t.Error("spinner stopped while the view is still loading")
+	}
+	// When loading finished the spinner stops.
+	m.focused().B().Loading = false
+	if _, cmd := m.Update(spinnerMsg{}); cmd != nil {
+		t.Error("spinner kept running after loading finished")
 	}
 }
 
