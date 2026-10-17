@@ -22,7 +22,7 @@ split-ratio       = 0.66          # size of the child view in a split (0.1 - 0.9
 show-line-numbers = false
 mouse             = true
 tab-size          = 8
-title-overflow    = 50            # highlight subjects longer than this ($ toggles)
+title-overflow    = 0             # 0 = off; positive: highlight longer subjects ($ toggles)
 keybar            = true          # show the key hints above the status bar
 
 [main]

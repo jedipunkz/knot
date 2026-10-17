@@ -131,7 +131,7 @@ func Default() *Config {
 			SplitRatio:     0.66,
 			Mouse:          true,
 			TabSize:        8,
-			TitleOverflow:  50,
+			TitleOverflow:  0,
 			KeyBar:         true,
 		},
 		Main: Main{
