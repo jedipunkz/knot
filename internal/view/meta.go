@@ -264,7 +264,10 @@ var (
 	_ View = (*OptionsView)(nil)
 	_ View = (*ThemeView)(nil)
 
-	_ Filterable = (*MainView)(nil)
+	_ Filterable    = (*MainView)(nil)
+	_ Filterable    = (*WorktreeView)(nil)
+	_ FilterStarter = (*WorktreeView)(nil)
+	_ InfoLine      = (*WorktreeView)(nil)
 
 	_ CursorWatcher = (*ThemeView)(nil)
 	_ Closer        = (*ThemeView)(nil)

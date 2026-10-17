@@ -129,6 +129,7 @@ func TestWorktreeSwitchOpensMainAtHead(t *testing.T) {
 	m := newModel(t, main, nil, view.NewMain(nil, nil))
 	press(t, m, "s") // push another view so the stack reset is visible
 	press(t, m, "w")
+	press(t, m, "ctrl+n") // out of the filter bar, onto the list
 	if got := m.focused().Name(); got != "worktree" {
 		t.Fatalf("focused = %s", got)
 	}
@@ -162,7 +163,7 @@ func TestWorktreeSwitchOnSwitchStatus(t *testing.T) {
 	cfg := config.Default()
 	cfg.Worktree.OnSwitch = "status"
 	m := newModel(t, main, cfg, view.NewWorktree())
-	press(t, m, "j", "enter")
+	press(t, m, "ctrl+n", "j", "enter")
 	if m.focused().Name() != "status" {
 		t.Errorf("focused = %s", m.focused().Name())
 	}
@@ -174,7 +175,7 @@ func TestWorktreeSwitchRejectsPrunable(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := newModel(t, main, nil, view.NewWorktree())
-	press(t, m, "j", "enter")
+	press(t, m, "ctrl+n", "j", "enter")
 	if m.focused().Name() != "worktree" || !m.statusErr || !strings.Contains(m.status, "prunable") {
 		t.Errorf("focused %s, status %q (err=%v)", m.focused().Name(), m.status, m.statusErr)
 	}
@@ -416,6 +417,90 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+func TestWorktreeFilterBar(t *testing.T) {
+	main, _ := setupRepo(t)
+	m := newModel(t, main, nil, view.NewWorktree())
+	// The filter bar is focused right after opening the worktree view.
+	if m.filterBar == nil {
+		t.Fatal("filter bar not focused on open")
+	}
+	if name := m.focused().Name(); name != "worktree" {
+		t.Fatalf("focused = %s", name)
+	}
+	// Typing filters live: "z" appears in none of the worktree paths,
+	// branches or subjects with this fixture.
+	press(t, m, "z")
+	if n := m.focused().Len(); n != 0 {
+		t.Fatalf("filtered rows = %d, want 0", n)
+	}
+	if m.filterBar == nil {
+		t.Error("the bar lost focus while typing")
+	}
+	// Backspace restores the full list without leaving the bar.
+	press(t, m, "backspace")
+	if n := m.focused().Len(); n != 2 {
+		t.Fatalf("rows after backspace = %d, want 2", n)
+	}
+	// Ctrl-N moves to the list with the filter kept; the key bar shows
+	// the selected worktree's info.
+	press(t, m, "ctrl+n")
+	if m.filterBar != nil {
+		t.Error("ctrl+n did not move to the list")
+	}
+	if sel := m.focused().Selection(m.env); sel.Worktree == "" {
+		t.Errorf("selection empty")
+	}
+	out, _ := m.render()
+	// The selected worktree's info is shown above the status bar.
+	split := strings.Split(out, "\n")
+	if !strings.Contains(split[len(split)-2], "main") {
+		t.Errorf("keybar info = %q", split[len(split)-2])
+	}
+	press(t, m, "ctrl+p")
+	if m.filterBar == nil {
+		t.Error("ctrl+p did not focus the filter bar")
+	}
+	press(t, m, "enter")
+	if m.filterBar != nil {
+		t.Error("enter did not move to the list")
+	}
+	if sel := m.focused().Selection(m.env); sel.Worktree == "" {
+		t.Errorf("selection after enter empty")
+	}
+	// Enter in the list resets the view stack (switching the worktree).
+	press(t, m, "enter")
+	if len(m.stack) != 1 {
+		t.Fatalf("stack after switch = %d, want 1", len(m.stack))
+	}
+	if m.filterBar != nil {
+		t.Error("the switch kept the filter bar focused")
+	}
+	if m.focused().Name() != "main" {
+		t.Errorf("focused after switch = %s", m.focused().Name())
+	}
+}
+
+func TestWorktreeEscClearsFilter(t *testing.T) {
+	main, _ := setupRepo(t)
+	m := newModel(t, main, nil, view.NewWorktree())
+	press(t, m, "z", "ctrl+n")
+	if n := m.focused().Len(); n != 0 {
+		t.Fatal("filter did not narrow the list")
+	}
+	press(t, m, "esc")
+	if m.focused().Len() != 2 {
+		t.Fatalf("esc did not clear the filter: %d rows", m.focused().Len())
+	}
+	if sel := m.focused().Selection(m.env); sel.Worktree == "" {
+		t.Errorf("selection after esc empty")
+	}
+	// Ctrl-P on the (cleared) list re-focuses the bar.
+	press(t, m, "ctrl+p")
+	if m.filterBar == nil || string(m.filterBar.input) != "" {
+		t.Errorf("ctrl+p after esc: bar=%v input=%q", m.filterBar != nil, string(m.filterBar.input))
+	}
 }
 
 func TestUserCommandPlaceholders(t *testing.T) {

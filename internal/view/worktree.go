@@ -21,12 +21,21 @@ type worktreeRow struct {
 	subject string
 	track   string
 	dirty   int // -1 unknown, 0 clean, 1 dirty
+	hl      *wtHighlight
+}
+
+// wtHighlight holds the fuzzy-filter match positions of one worktree row.
+type wtHighlight struct {
+	path, branch, subject []int
+	id                    int // leading runes of the HEAD commit matched
 }
 
 // WorktreeView lists the worktrees of the repository.
 type WorktreeView struct {
 	Base
-	rows []worktreeRow
+	all   []worktreeRow // everything loaded
+	rows  []worktreeRow // visible after the filter
+	query string
 }
 
 // NewWorktree creates a worktree view.
@@ -136,21 +145,28 @@ func (v *WorktreeView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
 	switch m := msg.(type) {
 	case worktreeListMsg:
 		v.finish(m.err)
-		v.rows = m.rows
+		if m.err != nil {
+			v.all, v.rows = nil, nil
+			break
+		}
+		v.all = m.rows
+		v.refilter(env)
 		v.Clamp(len(v.rows))
 		if m.err == nil && env.Cfg.Worktree.ShowDirty {
 			return v.dirtyCheck(env)
 		}
 	case dirtyMsg:
 		v.finish(nil)
-		for i := range v.rows {
-			if d, ok := m.dirty[v.rows[i].wt.Path]; ok {
-				v.rows[i].dirty = 0
+		for i := range v.all {
+			if d, ok := m.dirty[v.all[i].wt.Path]; ok {
+				v.all[i].dirty = 0
 				if d {
-					v.rows[i].dirty = 1
+					v.all[i].dirty = 1
 				}
 			}
 		}
+		v.refilter(env)
+		v.Clamp(len(v.rows))
 	}
 	return nil
 }
@@ -171,8 +187,23 @@ func samePath(a, b string) bool {
 	return filepath.Clean(a) == filepath.Clean(b)
 }
 
+// wtBranch is the displayed branch of a worktree (placeholders included).
+func wtBranch(wt git.Worktree) string {
+	switch {
+	case wt.Bare:
+		return "(bare)"
+	case wt.Detached || wt.Branch == "":
+		return "(detached)"
+	}
+	return wt.Branch
+}
+
 func (v *WorktreeView) Row(env *Env, i int) []Seg {
 	r := v.rows[i]
+	hl := r.hl
+	if v.query == "" {
+		hl = nil
+	}
 	mark := "  "
 	switch {
 	case v.isCurrent(env, r.wt):
@@ -180,19 +211,28 @@ func (v *WorktreeView) Row(env *Env, i int) []Seg {
 	case r.wt.Main:
 		mark = "@ "
 	}
-	branch := r.wt.Branch
-	switch {
-	case r.wt.Bare:
-		branch = "(bare)"
-	case r.wt.Detached || branch == "":
-		branch = "(detached)"
+	id := Short(r.wt.Head, env.Cfg.Main.CommitIDLength)
+	segs := []Seg{{theme.Marker, mark}}
+	var col []Seg
+	if hl != nil {
+		col = splitMatched(env.Theme, theme.Directory, FitTail(env.Abbrev(r.wt.Path), 40)+" ", hl.path, new(int))
+	} else {
+		col = []Seg{{theme.Directory, FitTail(env.Abbrev(r.wt.Path), 40) + " "}}
 	}
-	segs := []Seg{
-		{theme.Marker, mark},
-		{theme.Directory, FitTail(env.Abbrev(r.wt.Path), 40) + " "},
-		{theme.RefBranch, Fit(branch, 24) + " "},
-		{theme.CommitID, Fit(Short(r.wt.Head, env.Cfg.Main.CommitIDLength), env.Cfg.Main.CommitIDLength) + " "},
+	segs = append(segs, col...)
+	if hl != nil && len(hl.branch) > 0 {
+		col = splitMatched(env.Theme, theme.RefBranch, Fit(wtBranch(r.wt), 24)+" ", hl.branch, new(int))
+	} else {
+		col = []Seg{{theme.RefBranch, Fit(wtBranch(r.wt), 24) + " "}}
 	}
+	segs = append(segs, col...)
+	if hl != nil && hl.id > 0 {
+		k := min(hl.id, len(id))
+		segs = append(segs, Seg{theme.SearchMatch, id[:k]}, Seg{theme.CommitID, id[k:]})
+	} else {
+		segs = append(segs, Seg{theme.CommitID, Fit(id, env.Cfg.Main.CommitIDLength)})
+	}
+	segs = append(segs, Seg{theme.Default, " "})
 	var flags []string
 	if r.dirty == 1 {
 		flags = append(flags, "dirty")
@@ -209,14 +249,118 @@ func (v *WorktreeView) Row(env *Env, i int) []Seg {
 	if len(flags) > 0 {
 		segs = append(segs, Seg{theme.Warning, "[" + strings.Join(flags, ", ") + "] "})
 	}
-	return append(segs, Seg{theme.Default, r.subject})
+	if hl != nil && len(hl.subject) > 0 {
+		col = splitMatched(env.Theme, theme.Default, r.subject, hl.subject, new(int))
+	} else {
+		col = []Seg{{theme.Default, r.subject}}
+	}
+	return append(segs, col...)
 }
 
+// current returns the selected row of the visible list.
 func (v *WorktreeView) current() *worktreeRow {
-	if v.Cursor < len(v.rows) {
-		return &v.rows[v.Cursor]
+	if v.Cursor < 0 || v.Cursor >= len(v.rows) {
+		return nil
 	}
-	return nil
+	return &v.rows[v.Cursor]
+}
+
+// SetFilter applies a fuzzy query ("" clears it). Filtering keeps the
+// original order and the selected worktree while it still matches.
+func (v *WorktreeView) SetFilter(env *Env, q string) {
+	if len(strings.Fields(q)) == 0 {
+		q = ""
+	}
+	var selPath string
+	if r := v.current(); r != nil {
+		selPath = r.wt.Path
+	}
+	v.query = q
+	v.refilter(env)
+	for i, r := range v.rows {
+		if r.wt.Path == selPath {
+			v.Cursor = i
+			break
+		}
+	}
+	v.Clamp(len(v.rows))
+}
+
+// FilterStatus implements Filterable.
+func (v *WorktreeView) FilterStatus() (string, int, int, bool) {
+	return v.query, len(v.rows), len(v.all), v.Loading
+}
+
+// refilter rebuilds the visible rows from the loaded ones.
+func (v *WorktreeView) refilter(env *Env) {
+	tokens := strings.Fields(v.query)
+	if len(tokens) == 0 {
+		v.rows = v.all
+		return
+	}
+	out := make([]worktreeRow, 0, len(v.all))
+	for _, r := range v.all {
+		hl := matchWorktreeRow(env, r, tokens)
+		if hl == nil {
+			continue
+		}
+		nr := r
+		nr.hl = hl
+		out = append(out, nr)
+	}
+	v.rows = out
+}
+
+// matchWorktreeRow matches all tokens against the worktree path, branch,
+// HEAD commit ID and subject; every token must match at least one field.
+func matchWorktreeRow(env *Env, r worktreeRow, tokens []string) *wtHighlight {
+	branch := wtBranch(r.wt)
+	var hl *wtHighlight
+	for _, tok := range tokens {
+		var h wtHighlight
+		matched := false
+		if pos, ok := fuzzyMatch(tok, env.Abbrev(r.wt.Path)); ok {
+			matched = true
+			h.path = pos
+		}
+		if pos, ok := fuzzyMatch(tok, branch); ok {
+			matched = true
+			h.branch = pos
+		}
+		if _, ok := fuzzyMatch(tok, r.subject); ok {
+			matched = true
+			if pos, ok := fuzzyMatch(tok, r.subject); ok {
+				h.subject = pos
+			}
+		}
+		if strings.HasPrefix(strings.ToLower(r.wt.Head), strings.ToLower(tok)) {
+			matched = true
+			h.id = len(tok)
+		}
+		if !matched {
+			return nil
+		}
+		if hl == nil {
+			hl = &wtHighlight{}
+		}
+		hl.path = unionPos(hl.path, h.path)
+		hl.branch = unionPos(hl.branch, h.branch)
+		hl.subject = unionPos(hl.subject, h.subject)
+		hl.id = max(hl.id, h.id)
+	}
+	return hl
+}
+
+// FilterOnOpen focuses the filter bar as soon as the worktree view opens;
+// Ctrl-P / Ctrl-N then move between the bar and the list.
+func (v *WorktreeView) FilterOnOpen() bool { return true }
+
+// Info is the selected worktree's row content, shown in the key bar.
+func (v *WorktreeView) Info(env *Env) []Seg {
+	if v.Cursor < 0 || v.Cursor >= len(v.rows) {
+		return nil
+	}
+	return v.Row(env, v.Cursor)
 }
 
 // Enter switches to the selected worktree.

@@ -123,6 +123,10 @@ func (m *Model) push(v view.View, child bool) tea.Cmd {
 	m.stack = append(m.stack, entry{v: v, child: child && len(m.stack) > 0})
 	m.focusParent = false
 	m.maximized = false
+	// Views that ask for it start with the filter bar focused.
+	if s, ok := v.(view.FilterStarter); ok && s.FilterOnOpen() {
+		m.filterBar = &filterBar{}
+	}
 	return v.Load(m.env)
 }
 
@@ -442,6 +446,21 @@ func (m *Model) key(msg tea.KeyPressMsg) tea.Cmd {
 	if v == nil {
 		return tea.Quit
 	}
+	// Sticky filter views (e.g. worktrees) move between the bar and the
+	// list with Ctrl-P / Ctrl-N wherever the cursor is.
+	if s, ok := v.(view.FilterStarter); ok && s.FilterOnOpen() {
+		if fw, isf := v.(view.Filterable); isf {
+			switch k {
+			case "ctrl+p":
+				q, _, _, _ := fw.FilterStatus()
+				m.filterBar = &filterBar{input: []rune(q)}
+				return nil
+			case "ctrl+n":
+				m.filterBar = nil
+				return nil
+			}
+		}
+	}
 	a, ok := m.env.Keys.Lookup(v.Name(), k)
 	if !ok {
 		if k == "esc" {
@@ -539,7 +558,11 @@ func (m *Model) filterKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.filterBar = nil
 		f.B().SetCursor(0, f.Len())
 	case "ctrl+p", "up":
-		// No-op inside the bar.
+		if s, ok := f.(view.FilterStarter); ok && s.FilterOnOpen() {
+			// Sticky bar: return to the list, filter kept.
+			m.filterBar = nil
+		}
+		// No-op inside the main view's bar.
 	default:
 		if editInput(&m.filterBar.input, msg) {
 			m.setFilter(f, string(m.filterBar.input))
@@ -851,8 +874,14 @@ func (m *Model) render() (string, *tea.Cursor) {
 	th := m.env.Theme
 	w, h := m.width, m.height
 	keybarH := 0
-	if m.env.Cfg.UI.KeyBar && h >= 5 && m.prompt == nil && m.filterBar == nil && m.confirm == nil {
-		keybarH = 1
+	if m.env.Cfg.UI.KeyBar && h >= 5 && m.prompt == nil && m.confirm == nil {
+		// While the filter bar is focused the hints belong to the input;
+		// views with an info line (e.g. worktrees) still show the info.
+		if m.filterBar == nil {
+			keybarH = 1
+		} else if _, ok := m.focused().(view.InfoLine); ok {
+			keybarH = 1
+		}
 	}
 	avail := max(h-1-keybarH, 2)
 	m.panels = m.panels[:0]
@@ -921,28 +950,46 @@ func (m *Model) render() (string, *tea.Cursor) {
 	return body + "\n" + line, cursor
 }
 
-// keybarRow renders the curated key hints above the status bar. The key
-// of each entry is resolved against the live keymap (unbound actions are
-// skipped); the row is cut at the width of the screen.
+// keybarRow renders the row above the status bar: the focused view's info
+// line first (e.g. the selected worktree), then the curated key hints.
+// Hints are resolved against the live keymap (unbound actions are
+// skipped); the row is cut at the screen width.
 func (m *Model) keybarRow(w int) string {
 	th := m.env.Theme
-	name := m.focused().Name()
-	var out []string
-	total := 0
-	for _, e := range keymap.Bar(name) {
-		keys := m.env.Keys.KeysOf(name, e.Action)
-		if len(keys) == 0 {
-			continue
+	var parts []string
+	budget := w
+	if il, ok := m.focused().(view.InfoLine); ok {
+		infoW := 0
+		for _, s := range il.Info(m.env) {
+			parts = append(parts, th.Render(s.Role, s.Text))
+			infoW += ansi.StringWidth(s.Text)
 		}
-		key := keybarKey(keys[0])
-		width := ansi.StringWidth(key) + 1 + ansi.StringWidth(e.Text) + 2
-		if total+width > w {
-			break
-		}
-		out = append(out, th.Render(theme.Prompt, key)+" "+th.Render(theme.LineNumber, e.Text))
-		total += width
+		budget -= infoW + 2
 	}
-	return strings.Join(out, th.Render(theme.LineNumber, "  "))
+	if m.filterBar == nil {
+		name := m.focused().Name()
+		var out []string
+		total := 0
+		for _, e := range keymap.Bar(name) {
+			keys := m.env.Keys.KeysOf(name, e.Action)
+			if len(keys) == 0 {
+				continue
+			}
+			key := keybarKey(keys[0])
+			width := ansi.StringWidth(key) + 1 + ansi.StringWidth(e.Text) + 2
+			if total+width > budget {
+				break
+			}
+			out = append(out, th.Render(theme.Prompt, key)+" "+th.Render(theme.LineNumber, e.Text))
+			total += width
+		}
+		parts = append(parts, out...)
+	}
+	row := strings.Join(parts, th.Render(theme.LineNumber, "  "))
+	for ansi.StringWidth(row) > w {
+		row = ansi.Truncate(row, w-1, "…")
+	}
+	return row
 }
 
 // keybarKey formats a key for the key bar.

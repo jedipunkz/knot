@@ -84,7 +84,10 @@ cherry-pick, checkout, remove / prune worktree) ask for confirmation.
 
 `w` lists the worktrees of the repository with their branch, HEAD and flags
 (`dirty`, `locked`, `prunable`, ahead / behind). `*` marks the active
-worktree and `@` the main worktree.
+worktree and `@` the main worktree. The view opens with the filter bar
+focused: typing narrows the list by path, branch, HEAD commit ID and
+subject; `Ctrl-P` / `Ctrl-N` move between the bar and the list. The
+selected worktree is shown in the key bar area below the list.
 
 | Key | Action |
 |---|---|
