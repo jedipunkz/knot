@@ -89,3 +89,23 @@ func contains(list []string, s string) bool {
 	}
 	return false
 }
+
+func TestDimVariants(t *testing.T) {
+	for _, name := range BuiltinNames {
+		th, err := Load("", name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cases := map[Role]Role{AuthorDim: Author, DateDim: Date, CommitIDDim: CommitID, RefDim: RefBranch}
+		for dim, val := range cases {
+			valSpec := th.specs[val]
+			dimSpec := th.specs[dim]
+			if dimSpec.Fg != valSpec.Fg {
+				t.Errorf("%s: %s fg = %q, want the %s color %q", name, dim, dimSpec.Fg, val, valSpec.Fg)
+			}
+			if !contains(dimSpec.Attrs, "dim") {
+				t.Errorf("%s: %s attrs = %v, want dim attr", name, dim, dimSpec.Attrs)
+			}
+		}
+	}
+}

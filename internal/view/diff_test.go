@@ -107,11 +107,23 @@ func TestDiffCommitHeader(t *testing.T) {
 		4: theme.Author,
 		5: theme.Date,
 	}
+	// Labels use the dim variant of their field's value color; values
+	// keep the value role.
+	labelRoles := map[int]theme.Role{
+		0: theme.CommitIDDim,
+		1: theme.RefDim,
+		2: theme.AuthorDim,
+		3: theme.DateDim,
+		4: theme.AuthorDim,
+		5: theme.DateDim,
+	}
+	for i, role := range labelRoles {
+		if s := v.Row(env, i)[0]; s.Role != role || s.Text != labelRow(headerLabels[i]) {
+			t.Errorf("row %d label = %v %q, want %v", i, s.Role, s.Text, role)
+		}
+	}
 	for i, role := range valueRoles {
 		segs := v.Row(env, i)
-		if segs[0].Role != theme.LineNumber || segs[0].Text != labelRow(headerLabels[i]) {
-			t.Errorf("row %d label = %v %q", i, segs[0].Role, segs[0].Text)
-		}
 		if len(segs) < 2 || segs[1].Role != role {
 			t.Errorf("row %d value = %+v, want role %v", i, segs[1], role)
 		}

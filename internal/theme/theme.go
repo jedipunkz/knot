@@ -56,6 +56,14 @@ const (
 	Overflow        Role = "title-overflow"
 	Directory       Role = "directory"
 	Marker          Role = "marker"
+
+	// Dim variants of a field's value color; used for the labels of the
+	// diff view header so that each label reads as the dark version of
+	// the value next to it.
+	AuthorDim   Role = "author-dim"
+	DateDim     Role = "date-dim"
+	CommitIDDim Role = "commit-id-dim"
+	RefDim      Role = "ref-dim"
 )
 
 // GraphColors is the number of graph lane roles (graph-1 .. graph-N).
@@ -67,7 +75,7 @@ func AllRoles() []Role {
 		RefHead, RefBranch, RefRemote, RefTag, RefStash, RefWorktree,
 		DiffAdd, DiffDel, DiffAddHL, DiffDelHL, DiffHunk, DiffHeader, DiffMeta, StatAdd, StatDel,
 		StatusStaged, StatusUnstaged, StatusUntracked, Section, SearchMatch, Prompt, Error, Warning,
-		Overflow, Directory, Marker}
+		Overflow, Directory, Marker, AuthorDim, DateDim, CommitIDDim, RefDim}
 	for i := 1; i <= GraphColors; i++ {
 		roles = append(roles, GraphRole(i-1))
 	}

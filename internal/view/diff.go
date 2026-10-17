@@ -91,14 +91,20 @@ func (v *DiffView) HandleMsg(env *Env, msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-// headerFields are the labeled fields of git show --format=fuller output
-// and the theme role of their value.
-var headerFields = map[string]theme.Role{
-	"Merge":      theme.CommitID,
-	"Author":     theme.Author,
-	"AuthorDate": theme.Date,
-	"Commit":     theme.Author,
-	"CommitDate": theme.Date,
+// headerFields are the labeled fields of git show --format=fuller output,
+// the theme role of their value and the dim variant of that value used as
+// the label color.
+type headerField struct {
+	value theme.Role
+	label theme.Role
+}
+
+var headerFields = map[string]headerField{
+	"Merge":      {theme.CommitID, theme.CommitIDDim},
+	"Author":     {theme.Author, theme.AuthorDim},
+	"AuthorDate": {theme.Date, theme.DateDim},
+	"Commit":     {theme.Author, theme.AuthorDim},
+	"CommitDate": {theme.Date, theme.DateDim},
 }
 
 // isCommitHeaderLine reports whether l belongs to the git show
@@ -145,29 +151,29 @@ func (v *DiffView) restyleCommitHeader(env *Env) {
 	var lines []string
 	var roles []theme.Role
 	var rows [][]Seg
-	add := func(field, value string, valueSegs []Seg) {
+	add := func(field string, labelRole theme.Role, value string, valueSegs []Seg) {
 		lines = append(lines, Fit(field+":", headerLabelWidth)+" "+value)
 		roles = append(roles, theme.Default)
-		rows = append(rows, append([]Seg{{theme.LineNumber, Fit(field+":", headerLabelWidth)}}, valueSegs...))
+		rows = append(rows, append([]Seg{{labelRole, Fit(field+":", headerLabelWidth)}}, valueSegs...))
 	}
-	add("commit", sha, []Seg{{theme.CommitID, sha}})
+	add("commit", theme.CommitIDDim, sha, []Seg{{theme.CommitID, sha}})
 	refs := refSegs(env, sha, nil)
 	var refText strings.Builder
 	for _, s := range refs {
 		refText.WriteString(s.Text)
 	}
-	add("Refs", refText.String(), refs)
+	add("Refs", theme.RefDim, refText.String(), refs)
 	for _, l := range t.lines[1:end] {
 		field, value, ok := strings.Cut(l, ":")
 		if !ok {
 			continue
 		}
 		value = strings.TrimSpace(value)
-		role := headerFields[field]
-		if role == "" {
-			role = theme.DiffMeta
+		hf := headerFields[field]
+		if hf.value == "" {
+			hf = headerField{theme.DiffMeta, theme.LineNumber}
 		}
-		add(field, value, []Seg{{role, value}})
+		add(field, hf.label, value, []Seg{{hf.value, value}})
 	}
 	t.lines = append(lines, t.lines[end:]...)
 	t.roles = append(roles, t.roles[end:]...)
