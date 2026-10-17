@@ -157,6 +157,11 @@ func (b *Base) load(fn func(ctx context.Context) (any, error)) tea.Cmd {
 	}
 }
 
+// onRow reports whether the cursor addresses a row of a list of n rows.
+// Every current()-style accessor routes its bounds check through this
+// helper so the guards stay consistent across the views.
+func (b *Base) onRow(n int) bool { return b.Cursor >= 0 && b.Cursor < n }
+
 // Clamp keeps cursor and offset inside the content.
 func (b *Base) Clamp(n int) {
 	if b.Cursor >= n {
