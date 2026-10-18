@@ -469,7 +469,7 @@ Output modes: `status` shows the last output line in the status bar, `pager` ope
 | M4 | blame, stash, reflog, grep, pager (stdin + `:!cmd`) | done |
 | M5 | worktree view and worktree-aware context switching | done |
 | M6 | User commands, placeholders, theme picker, built-in theme set | done |
-| M7 | Polish: mouse, performance on large repos (Linux kernel–sized log), release (goreleaser, Homebrew) | mouse done; benchmark base set (filter pass, graph build, tracked in CI), kernel-sized-log performance and release not started |
+| M7 | Polish: mouse, performance on large repos (Linux kernel–sized log), release (GitHub Actions release workflow, Homebrew tap `jedipunkz/homebrew-knot`) | mouse done; benchmark base set (filter pass, graph build, tracked in CI); release workflow and Homebrew tap done; kernel-sized-log performance not started |
 
 ## 12. Open questions
 
