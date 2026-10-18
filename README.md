@@ -21,11 +21,12 @@ The design is described in [#1](https://github.com/jedipunkz/knot/issues/1).
 go install github.com/jedipunkz/knot/cmd/knot@latest
 ```
 
-or with Homebrew:
+or with Homebrew (use the full name: `knot` alone is the Knot DNS server in
+homebrew-core):
 
 ```sh
 brew tap jedipunkz/knot
-brew install knot
+brew install jedipunkz/knot/knot
 ```
 
 ## Usage
