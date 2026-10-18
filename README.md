@@ -24,7 +24,8 @@ go install github.com/jedipunkz/knot/cmd/knot@latest
 or with Homebrew:
 
 ```sh
-brew install --cask jedipunkz/knot
+brew tap jedipunkz/knot
+brew install knot
 ```
 
 ## Usage
