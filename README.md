@@ -71,7 +71,6 @@ Built-in themes: `default`, `tig-classic`, `dark`, `light`, `solarized-dark`,
 
 ## Development
 
-See [DESIGN.md](DESIGN.md) and [AGENTS.md](AGENTS.md).
 
 ```sh
 make check
