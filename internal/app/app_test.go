@@ -388,6 +388,18 @@ func TestKeyBar(t *testing.T) {
 	}
 }
 
+// Quitting with q empties the view stack; Bubble Tea still renders a
+// final frame, which must not reach into a missing view.
+func TestRenderAfterLastViewClosed(t *testing.T) {
+	main, _ := setupRepo(t)
+	m := newModel(t, main, nil, view.NewMain(nil, nil))
+	press(t, m, "q")
+	if len(m.stack) != 0 {
+		t.Fatalf("stack = %d, want 0", len(m.stack))
+	}
+	m.View()
+}
+
 func TestLoadingSpinner(t *testing.T) {
 	main, _ := setupRepo(t)
 	m := newModel(t, main, nil, view.NewMain(nil, nil))
