@@ -19,7 +19,9 @@ func (m *Model) render() (string, *tea.Cursor) {
 	th := m.env.Theme
 	w, h := m.width, m.height
 	keybarH := 0
-	if m.env.Cfg.UI.KeyBar && h >= 5 && m.prompt == nil && m.confirm == nil {
+	// With an empty stack (the final frame after quitting) there is no
+	// focused view to describe.
+	if m.env.Cfg.UI.KeyBar && len(m.stack) > 0 && h >= 5 && m.prompt == nil && m.confirm == nil {
 		// While the filter bar is focused the hints belong to the input;
 		// views with an info line (e.g. worktrees) still show the info.
 		if m.filterBar == nil {
